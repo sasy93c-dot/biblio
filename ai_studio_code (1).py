@@ -159,64 +159,95 @@ if scelta == "🛋️ La Mia Libreria":
 # -------------------------------------------------------------
 # 2. AGGIUNGI LIBRO
 # -------------------------------------------------------------
-elif scelta == "➕ Aggiungi un Libro":
-    st.title("✨ Aggiungi un Volume alla Collezione")
-    
-    col_isbn, col_btn = st.columns([3, 1])
-    isbn_input = col_isbn.text_input("Codice ISBN da scansionare o digitare:")
-    
-    # Inizializzazione dati
-    for k in ["p_tit", "p_aut", "p_cov", "p_pag"]:
-        if k not in st.session_state:
-            st.session_state[k] = ""
-            
+import re, requests, streamlit as st
+
+HEADERS = {"User-Agent": "TanaLibri/1.0 (streamlit)"}
+
+def _get(url, params=None):
+    r = requests.get(url, params=params, headers=HEADERS, timeout=12)
+    r.raise_for_status()
+    return r.json()
+
+def _isbn13(i):
+    if len(i) != 10:
+        return i
+    base = "978" + i[:9]
+    ctrl = (10 - sum(int(c) * (1 if n % 2 == 0 else 3) for n, c in enumerate(base)) % 10) % 10
+    return base + str(ctrl)
+
+def _google(q, isbn):
+    p = {"q": q, "maxResults": 5, "country": "IT"}
+    if "GOOGLE_BOOKS_KEY" in st.secrets:
+        p["key"] = st.secrets["GOOGLE_BOOKS_KEY"]
+    items = _get("https://www.googleapis.com/books/v1/volumes", p).get("items") or []
+    scelto = None
+    for it in items:
+        ids = [x.get("identifier", "") for x in it["volumeInfo"].get("industryIdentifiers", [])]
+        if isbn in ids:
+            scelto = it
+            break
+    if not scelto and items and q.startswith("isbn:"):
+        scelto = items[0]
+    if not scelto:
+        return None
+    v = scelto["volumeInfo"]
+    cover = (v.get("imageLinks") or {}).get("thumbnail", "").replace("http://", "https://").replace("&edge=curl", "")
+    return {"titolo": v.get("title", ""), "autore": ", ".join(v.get("authors", [])),
+            "copertina": cover, "pagine": v.get("pageCount") or 0}
+
+def _openlibrary(isbn):
+    d = _get("https://openlibrary.org/api/books",
+             {"bibkeys": f"ISBN:{isbn}", "format": "json", "jscmd": "data"}).get(f"ISBN:{isbn}")
+    if not d:
+        return None
+    return {"titolo": d.get("title", ""),
+            "autore": ", ".join(a["name"] for a in d.get("authors", [])),
+            "copertina": (d.get("cover") or {}).get("medium", ""),
+            "pagine": d.get("number_of_pages") or 0}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cerca_online(isbn):
+    errori = []
+    fonti = (("google_isbn", lambda i: _google(f"isbn:{i}", i)),
+             ("google_testo", lambda i: _google(i, i)),
+             ("openlibrary", _openlibrary))
+    for nome, f in fonti:
+        try:
+            ris = f(isbn)
+            if ris and ris["titolo"]:
+                return ris
+            errori.append(f"{nome}: nessun risultato")
+        except Exception as e:
+            errori.append(f"{nome}: {e}")
+    raise LookupError(" | ".join(errori))
+
+def cerca_info_libro(isbn_grezzo):
+    isbn = re.sub(r"[^0-9Xx]", "", isbn_grezzo or "").upper()
+    st.session_state["ultimo_errore_isbn"] = ""
+    if not isbn:
+        return None
+    for codice in dict.fromkeys([isbn, _isbn13(isbn)]):
+        try:
+            return dict(_cerca_online(codice))
+        except LookupError as e:
+            st.session_state["ultimo_errore_isbn"] = str(e)
+    return None
     if col_btn.button("🔍 Trova Magia"):
-        if isbn_input:
-            info = cerca_info_libro(isbn_input)
+        if not isbn_input:
+            st.error("Inserisci prima un codice ISBN.")
+        else:
+            with st.spinner("Cerco il libro..."):
+                info = cerca_info_libro(isbn_input)
             if info:
                 st.session_state.p_tit = info["titolo"]
                 st.session_state.p_aut = info["autore"]
                 st.session_state.p_cov = info["copertina"]
-                st.session_state.p_pag = info["pagine"]
-                if info["titolo"]:
-                    st.success(f"Trovato: {info['titolo']}!")
-                else:
-                    st.warning("ISBN non trovato nei database, compila i dettagli a mano.")
-                    
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        titolo = st.text_input("Titolo:", value=st.session_state.p_tit)
-        autore = st.text_input("Autore:", value=st.session_state.p_aut)
-        pagine = st.number_input("Numero di Pagine:", min_value=0, value=int(st.session_state.p_pag or 0))
-        stato = st.selectbox("Stato Iniziale:", ["Da Iniziare ⏳", "In Lettura 📖", "Letti ✨"])
-        mood = st.selectbox("Che tipo di 'vibes' ha questo libro?", [
-            "☕ Tisana, coperta & pioggia",
-            "😭 Distruzione emotiva garantita",
-            "🧠 Cervellotico / Mi farà riflettere",
-            "⚡ Colpi di scena adrenalinici",
-            "🏖️ Leggero da ombrellone",
-            "🪐 Viaggio in altri mondi"
-        ])
-        voto = st.slider("Il tuo voto (se lo hai già letto):", 0, 5, 0)
-        citazione = st.text_area("Una frase che ti ha colpito (opzionale):")
-
-    with c2:
-        copertina = st.text_input("URL Copertina:", value=st.session_state.p_cov)
-        if copertina:
-            st.image(copertina, width=160, caption="Copertina")
-            
-    if st.button("📥 Aggiungi alla Mia Tana", type="primary"):
-        if not titolo.strip():
-            st.error("Il titolo è obbligatorio!")
-        else:
-            isbn_salva = re.sub(r"[^0-9Xx]", "", isbn_input or "").upper() or f"LIB-{random.randint(1000, 9999)}"
-            c.execute("""INSERT INTO miei_libri (isbn, titolo, autore, copertina_url, pagine, stato, voto, mood, citazione, data_aggiunta)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (isbn_salva, titolo, autore, copertina, pagine, stato, voto, mood, citazione, str(datetime.now().date())))
-            conn.commit()
-            st.success(f"'{titolo}' è entrato a far parte della tua libreria!")
-            st.balloons()
-
+                st.session_state.p_pag = int(info["pagine"] or 0)
+                st.success(f"Trovato: {info['titolo']}!")
+            else:
+                st.warning("ISBN non trovato nei database, compila i dettagli a mano.")
+                with st.expander("Dettagli tecnici"):
+                    st.write(st.session_state.get("ultimo_errore_isbn", ""))
 # -------------------------------------------------------------
 # 3. L'ORACOLO DELLA LETTURA (FUN FEATURE)
 # -------------------------------------------------------------
