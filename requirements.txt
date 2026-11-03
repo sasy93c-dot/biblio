@@ -1,2 +1,4 @@
-streamlit
-requests
+   streamlit
+   requests
+   pillow
+   zxing-cpp
