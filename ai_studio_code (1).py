@@ -145,6 +145,17 @@ def mostra_cover(src, **kw):
     except Exception:
         st.caption("Copertina non disponibile")
 
+def leggi_barcode(img_bytes):
+    """Legge un codice EAN/ISBN da una foto. Ritorna l'ISBN o None."""
+    import zxingcpp
+    from PIL import Image
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    for r in zxingcpp.read_barcodes(img):
+        t = re.sub(r"[^0-9Xx]", "", r.text).upper()
+        if len(t) in (10, 13):
+            return t
+    return None
+
 # --- STILI GRAFICI ---
 st.markdown("""
 <style>
@@ -247,8 +258,32 @@ elif scelta == "➕ Aggiungi un Libro":
         if k not in st.session_state:
             st.session_state[k] = default
 
+    with st.expander("📷 Scansiona il codice a barre con la fotocamera"):
+        st.caption("Inquadra il codice a barre sul retro del libro, ben illuminato e a fuoco, e scatta.")
+        foto = st.camera_input("Fotocamera", label_visibility="collapsed")
+        if foto:
+            try:
+                codice = leggi_barcode(foto.getvalue())
+            except Exception as e:
+                codice = None
+                st.error(f"Lettura non riuscita: {e}")
+            if codice:
+                if codice != st.session_state.get("isbn_scan"):
+                    st.session_state.isbn_scan = codice
+                    with st.spinner("Cerco il libro..."):
+                        info = cerca_info_libro(codice)
+                    if info:
+                        st.session_state.p_tit = info["titolo"]
+                        st.session_state.p_aut = info["autore"]
+                        st.session_state.p_cov = info["copertina"]
+                        st.session_state.p_pag = int(info["pagine"] or 0)
+                st.success(f"Codice letto: {codice}")
+            else:
+                st.warning("Non riesco a leggere il codice. Avvicinati, evita i riflessi e riprova, oppure digita l'ISBN.")
+
     col_isbn, col_btn = st.columns([3, 1])
-    isbn_input = col_isbn.text_input("Codice ISBN da scansionare o digitare:")
+    isbn_input = col_isbn.text_input("Codice ISBN da scansionare o digitare:",
+                                     value=st.session_state.get("isbn_scan", ""))
 
     if col_btn.button("🔍 Trova Magia"):
         if not isbn_input:
