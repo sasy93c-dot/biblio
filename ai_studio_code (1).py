@@ -1,411 +1,315 @@
 import re
+import random
 import requests
 import sqlite3
 import pandas as pd
 import streamlit as st
-from datetime import date
+from datetime import datetime
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Gestionale Biblioteca", layout="wide", page_icon="📚")
+st.set_page_config(page_title="BookNook - La Mia Tana dei Libri", layout="wide", page_icon="📖")
 
-# --- MOTORE DI RICERCA ISBN ---
-def pulisci_isbn(s):
-    return re.sub(r"[^0-9Xx]", "", s or "").upper()
-
-def isbn10_a_13(i):
-    if len(i) != 10: 
-        return i
-    base = "978" + i[:9]
-    ctrl = (10 - sum(int(c) * (1 if n % 2 == 0 else 3) for n, c in enumerate(base)) % 10) % 10
-    return base + str(ctrl)
-
-def cerca_google(isbn):
-    p = {"q": f"isbn:{isbn}"}
-    if "GOOGLE_BOOKS_KEY" in st.secrets:
-        p["key"] = st.secrets["GOOGLE_BOOKS_KEY"]
-    r = requests.get("https://www.googleapis.com/books/v1/volumes", params=p, timeout=10)
-    items = r.json().get("items") if r.ok else None
-    if not items: 
-        return None
-    v = items[0]["volumeInfo"]
-    cover = (v.get("imageLinks") or {}).get("thumbnail", "").replace("http://", "https://")
-    return {
-        "titolo": v.get("title", ""), 
-        "autore": ", ".join(v.get("authors", [])),
-        "editore": v.get("publisher", ""), 
-        "copertina": cover
-    }
-
-def cerca_openlibrary(isbn):
-    r = requests.get("https://openlibrary.org/api/books",
-        params={"bibkeys": f"ISBN:{isbn}", "format": "json", "jscmd": "data"}, timeout=10)
-    d = r.json().get(f"ISBN:{isbn}") if r.ok else None
-    if not d: 
-        return None
-    return {
-        "titolo": d.get("title", ""),
-        "autore": ", ".join(a["name"] for a in d.get("authors", [])),
-        "editore": ", ".join(p["name"] for p in d.get("publishers", [])),
-        "copertina": (d.get("cover") or {}).get("medium", "")
-    }
-
-@st.cache_data(ttl=86400)
-def cerca_libro(isbn_grezzo):
-    isbn = pulisci_isbn(isbn_grezzo)
-    if not isbn:
-        return None
-    for codice in dict.fromkeys([isbn, isbn10_a_13(isbn)]):
-        for fonte in (cerca_google, cerca_openlibrary):
-            try:
-                ris = fonte(codice)
-                if ris and ris["titolo"]:
-                    if not ris["copertina"]:
-                        ris["copertina"] = f"https://covers.openlibrary.org/b/isbn/{codice}-M.jpg?default=false"
-                    ris["isbn"] = codice
-                    return ris
-            except Exception:
-                continue
-    return None
-
-# --- INIZIALIZZAZIONE DATABASE ---
-def init_db():
-    conn = sqlite3.connect('biblioteca.db')
+# --- DATABASE PERSONALE ---
+def init_personal_db():
+    conn = sqlite3.connect('mia_libreria.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS libri (
+    c.execute('''CREATE TABLE IF NOT EXISTS miei_libri (
                     isbn TEXT PRIMARY KEY,
                     titolo TEXT,
                     autore TEXT,
-                    editore TEXT,
-                    copie_totali INTEGER,
-                    copie_disponibili INTEGER,
-                    copertina_url TEXT)''')
-
-    try:
-        c.execute("ALTER TABLE libri ADD COLUMN copertina_url TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE libri ADD COLUMN editore TEXT")
-    except sqlite3.OperationalError:
-        pass
-
-    c.execute('''CREATE TABLE IF NOT EXISTS utenti (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nome TEXT,
-                    cognome TEXT,
-                    email TEXT,
-                    telefono TEXT)''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS prestiti (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    isbn TEXT,
-                    utente_id INTEGER,
-                    data_prestito TEXT,
-                    data_restituzione TEXT,
+                    copertina_url TEXT,
+                    pagine INTEGER,
                     stato TEXT,
-                    FOREIGN KEY(isbn) REFERENCES libri(isbn),
-                    FOREIGN KEY(utente_id) REFERENCES utenti(id))''')
+                    voto INTEGER,
+                    mood TEXT,
+                    citazione TEXT,
+                    data_aggiunta TEXT)''')
     conn.commit()
     conn.close()
 
-init_db()
+init_personal_db()
 
-def get_connection():
-    return sqlite3.connect('biblioteca.db')
+def get_db():
+    return sqlite3.connect('mia_libreria.db')
 
-# --- INTERFACCIA ---
-st.title("📚 Banco Biblioteca - Gestione Prestiti")
+# --- RICERCA ISBN (Con estrazione automatica Pagine) ---
+def cerca_info_libro(isbn_grezzo):
+    isbn = re.sub(r"[^0-9Xx]", "", isbn_grezzo or "").upper()
+    if not isbn: 
+        return None
+    
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 1. Google Books
+    try:
+        url = f"https://www.googleapis.com/books/v1/volumes?q={isbn}"
+        res = requests.get(url, headers=headers, timeout=6).json()
+        if "items" in res and len(res["items"]) > 0:
+            v = res["items"][0]["volumeInfo"]
+            cover = (v.get("imageLinks") or {}).get("thumbnail", "").replace("http://", "https://")
+            return {
+                "isbn": isbn,
+                "titolo": v.get("title", ""),
+                "autore": ", ".join(v.get("authors", ["Autore Sconosciuto"])),
+                "pagine": v.get("pageCount", 0),
+                "copertina": cover or f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"
+            }
+    except Exception:
+        pass
 
-menu = st.sidebar.radio("Sezioni:", [
-    "📖 Catalogo Libri (ISBN)", 
-    "📋 Registra Prestito", 
-    "🔄 Rientro Prestito", 
-    "👥 Anagrafica Utenti", 
-    "📊 Storico Prestiti"
+    # 2. Open Library Fallback
+    try:
+        url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
+        res = requests.get(url, headers=headers, timeout=6).json()
+        key = f"ISBN:{isbn}"
+        if key in res:
+            d = res[key]
+            return {
+                "isbn": isbn,
+                "titolo": d.get("title", ""),
+                "autore": ", ".join([a["name"] for a in d.get("authors", [])]) or "Autore Sconosciuto",
+                "pagine": d.get("number_of_pages", 0),
+                "copertina": (d.get("cover") or {}).get("medium", f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg")
+            }
+    except Exception:
+        pass
+
+    return {"isbn": isbn, "titolo": "", "autore": "", "pagine": 0, "copertina": f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"}
+
+# --- STILI GRAFICI ---
+st.markdown("""
+<style>
+    .card-libro {
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 15px;
+        margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- MENU LATERALE ---
+st.sidebar.title("☕ BookNook")
+st.sidebar.caption("Il tuo rifugio letterario personale")
+scelta = st.sidebar.radio("Esplora:", [
+    "🛋️ La Mia Libreria", 
+    "➕ Aggiungi un Libro", 
+    "🔮 L'Oracolo della Lettura", 
+    "🏆 Sfide & Trofei"
 ])
 
-conn = get_connection()
+conn = get_db()
 c = conn.cursor()
 
 # -------------------------------------------------------------
-# 1. CATALOGO LIBRI (AGGIUNTA + MODIFICA QUANTITÀ)
+# 1. LA MIA LIBRERIA
 # -------------------------------------------------------------
-if menu == "📖 Catalogo Libri (ISBN)":
-    tab_nuovo, tab_modifica = st.tabs(["➕ Aggiungi Nuovo Libro", "✏️ Modifica Quantità / Rimuovi"])
+if scelta == "🛋️ La Mia Libreria":
+    st.title("📚 I Miei Libri")
+    
+    filtro_stato = st.selectbox("Filtra per stato:", ["Tutti", "In Lettura 📖", "Da Iniziare ⏳", "Letti ✨", "Abbandonati 💤"])
+    
+    if filtro_stato == "Tutti":
+        query = "SELECT * FROM miei_libri ORDER BY rowid DESC"
+        libri = c.execute(query).fetchall()
+    else:
+        query = "SELECT * FROM miei_libri WHERE stato = ? ORDER BY rowid DESC"
+        libri = c.execute(query, (filtro_stato,)).fetchall()
+        
+    if not libri:
+        st.info("Nessun libro trovato in questa sezione. Aggiungine uno nuovo dal menu a sinistra!")
+    else:
+        # Mostra i libri a griglia (3 per riga)
+        colonne = st.columns(3)
+        for i, b in enumerate(libri):
+            isbn, tit, aut, cover, pag, stato, voto, mood, cit, _ = b
+            col = colonne[i % 3]
+            with col:
+                with st.container():
+                    st.markdown('<div class="card-libro">', unsafe_allow_html=True)
+                    c_img, c_info = st.columns([1, 2])
+                    with c_img:
+                        if cover:
+                            st.image(cover, use_container_width=True)
+                    with c_info:
+                        st.subheader(tit)
+                        st.caption(f"✍️ {aut}")
+                        st.markdown(f"🏷️ `{mood or 'Nessun Mood'}`")
+                        st.write(f"Stato: **{stato}**")
+                        if voto > 0:
+                            st.write("⭐" * voto)
+                        if pag > 0:
+                            st.caption(f"📄 {pag} pagine")
 
-    # --- TAB 1: INSERIMENTO NUOVO LIBRO ---
-    with tab_nuovo:
-        st.subheader("Carica Libro tramite ISBN o Manualmente")
+                    if cit:
+                        st.info(f"💬 *\"{cit}\"*")
+                    
+                    # Espansore rapido per aggiornare lo stato del libro
+                    with st.expander("✏️ Aggiorna stato o voto"):
+                        nuovo_stato = st.selectbox("Cambia Stato", ["In Lettura 📖", "Letti ✨", "Da Iniziare ⏳", "Abbandonati 💤"], index=0, key=f"st_{isbn}")
+                        nuovo_voto = st.slider("Voto (Stelle)", 0, 5, voto, key=f"vt_{isbn}")
+                        nuova_cit = st.text_area("Citazione preferita:", value=cit or "", key=f"ct_{isbn}")
+                        if st.button("Salva modifiche", key=f"btn_{isbn}"):
+                            c.execute("UPDATE miei_libri SET stato = ?, voto = ?, citazione = ? WHERE isbn = ?", (nuovo_stato, nuovo_voto, nuova_cit, isbn))
+                            conn.commit()
+                            st.rerun()
+                            
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-        for k in ["titolo_temp", "autore_temp", "editore_temp", "cover_temp", "isbn_temp"]:
-            if k not in st.session_state:
-                st.session_state[k] = ""
-
-        col_isbn, col_btn = st.columns([3, 1])
-        isbn_inserito = col_isbn.text_input("Codice ISBN (10 o 13 cifre):", value=st.session_state.isbn_temp)
-
-        if col_btn.button("🔍 Cerca Dati Online"):
-            if isbn_inserito:
-                with st.spinner("Ricerca in corso..."):
-                    dati = cerca_libro(isbn_inserito)
-                    if dati:
-                        st.session_state.titolo_temp = dati["titolo"]
-                        st.session_state.autore_temp = dati["autore"]
-                        st.session_state.editore_temp = dati["editore"]
-                        st.session_state.cover_temp = dati["copertina"]
-                        st.session_state.isbn_temp = dati["isbn"]
-                        st.success(f"Trovato: {dati['titolo']}")
-                        st.rerun()
-                    else:
-                        st.session_state.isbn_temp = pulisci_isbn(isbn_inserito)
-                        st.warning("Dati non trovati online. Puoi inserirli manualmente.")
-            else:
-                st.error("Inserisci prima un codice ISBN.")
-
-        col_dati, col_anteprima = st.columns([3, 1])
-        with col_dati:
-            titolo_finale = st.text_input("Titolo:", value=st.session_state.titolo_temp)
-            autore_finale = st.text_input("Autore:", value=st.session_state.autore_temp)
-            editore_finale = st.text_input("Editore:", value=st.session_state.editore_temp)
-            copertina_url = st.text_input("URL Copertina:", value=st.session_state.cover_temp)
-            copie = st.number_input("Quantità copie da aggiungere:", min_value=1, value=1, step=1)
-
-        with col_anteprima:
-            if st.session_state.cover_temp:
-                st.image(st.session_state.cover_temp, caption="Anteprima", width=140)
-            else:
-                st.info("Nessuna copertina")
-
-        if st.button("💾 Salva nel Catalogo", type="primary"):
-            isbn_finale = pulisci_isbn(isbn_inserito)
-            if not isbn_finale:
-                st.error("L'ISBN è obbligatorio.")
-            elif not titolo_finale.strip():
-                st.error("Il Titolo è obbligatorio.")
-            else:
-                try:
-                    c.execute("SELECT copie_totali, copie_disponibili FROM libri WHERE isbn = ?", (isbn_finale,))
-                    esiste = c.fetchone()
-
-                    if esiste:
-                        c.execute("""UPDATE libri 
-                                     SET copie_totali = copie_totali + ?, 
-                                         copie_disponibili = copie_disponibili + ?, 
-                                         titolo = ?, autore = ?, editore = ?, copertina_url = ? 
-                                     WHERE isbn = ?""",
-                                  (copie, copie, titolo_finale.strip(), autore_finale.strip(), editore_finale.strip(), copertina_url, isbn_finale))
-                        st.success(f"Aggiunte {copie} copie al libro '{titolo_finale}'.")
-                    else:
-                        c.execute("""INSERT INTO libri (isbn, titolo, autore, editore, copie_totali, copie_disponibili, copertina_url) 
-                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                  (isbn_finale, titolo_finale.strip(), autore_finale.strip(), editore_finale.strip(), copie, copie, copertina_url))
-                        st.success(f"Libro '{titolo_finale}' inserito a catalogo!")
-
-                    conn.commit()
-                    for k in ["titolo_temp", "autore_temp", "editore_temp", "cover_temp", "isbn_temp"]:
-                        st.session_state[k] = ""
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Errore durante il salvataggio: {e}")
-
-    # --- TAB 2: MODIFICA QUANTITÀ O ELIMINA ---
-    with tab_modifica:
-        st.subheader("Aggiorna Disponibilità o Rimuovi Libro")
-        libri_presenti = c.execute("SELECT isbn, titolo, autore, copie_totali, copie_disponibili, copertina_url FROM libri").fetchall()
-
-        if not libri_presenti:
-            st.info("Nessun libro presente da poter modificare.")
-        else:
-            diz_mod = {f"{l[1]} ({l[2]}) - ISBN: {l[0]}": l for l in libri_presenti}
-            libro_selezionato = st.selectbox("Seleziona il libro da modificare:", list(diz_mod.keys()))
-            dati_sel = diz_mod[libro_selezionato]
-
-            isbn_sel = dati_sel[0]
-            tit_sel = dati_sel[1]
-            totali_attuali = dati_sel[3]
-            disp_attuali = dati_sel[4]
-            in_prestito = totali_attuali - disp_attuali
-            cover_sel = dati_sel[5]
-
-            c_mod1, c_mod2 = st.columns([3, 1])
-            with c_mod1:
-                st.write(f"📌 **Riepilogo Attuale:**")
-                st.write(f"- Copie Totali Possedute: **{totali_attuali}**")
-                st.write(f"- Copie attualmente in Prestito ad utenti: **{in_prestito}**")
-                st.write(f"- Copie Fisicamente Disponibili al banco: **{disp_attuali}**")
-
-                nuovo_totale = st.number_input(
-                    "Imposta Nuovo Totale Copie Possedute:",
-                    min_value=in_prestito,
-                    value=totali_attuali,
-                    step=1,
-                    help=f"Non puoi scendere sotto {in_prestito} perché quelle copie sono attualmente fuori in prestito."
-                )
-
-            with c_mod2:
-                if cover_sel:
-                    st.image(cover_sel, width=120)
-
-            col_aggiorna, col_cancella = st.columns([2, 1])
-            if col_aggiorna.button("💾 Applica Nuova Quantità", type="primary"):
-                nuove_disp = nuovo_totale - in_prestito
-                c.execute("UPDATE libri SET copie_totali = ?, copie_disponibili = ? WHERE isbn = ?",
-                          (nuovo_totale, nuove_disp, isbn_sel))
-                conn.commit()
-                st.success(f"Copie aggiornate con successo! Nuove disponibili: {nuove_disp}")
-                st.rerun()
-
-            if col_cancella.button("🗑️ Rimuovi Libro dal Catalogo"):
-                if in_prestito > 0:
-                    st.error(f"Impossibile eliminare: ci sono {in_prestito} copie attualmente in prestito!")
+# -------------------------------------------------------------
+# 2. AGGIUNGI LIBRO
+# -------------------------------------------------------------
+elif scelta == "➕ Aggiungi un Libro":
+    st.title("✨ Aggiungi un Volume alla Collezione")
+    
+    col_isbn, col_btn = st.columns([3, 1])
+    isbn_input = col_isbn.text_input("Codice ISBN da scansionare o digitare:")
+    
+    # Inizializzazione dati
+    for k in ["p_tit", "p_aut", "p_cov", "p_pag"]:
+        if k not in st.session_state:
+            st.session_state[k] = ""
+            
+    if col_btn.button("🔍 Trova Magia"):
+        if isbn_input:
+            info = cerca_info_libro(isbn_input)
+            if info:
+                st.session_state.p_tit = info["titolo"]
+                st.session_state.p_aut = info["autore"]
+                st.session_state.p_cov = info["copertina"]
+                st.session_state.p_pag = info["pagine"]
+                if info["titolo"]:
+                    st.success(f"Trovato: {info['titolo']}!")
                 else:
-                    c.execute("DELETE FROM libri WHERE isbn = ?", (isbn_sel,))
-                    conn.commit()
-                    st.success(f"'{tit_sel}' è stato rimosso dal catalogo.")
-                    st.rerun()
+                    st.warning("ISBN non trovato nei database, compila i dettagli a mano.")
+                    
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        titolo = st.text_input("Titolo:", value=st.session_state.p_tit)
+        autore = st.text_input("Autore:", value=st.session_state.p_aut)
+        pagine = st.number_input("Numero di Pagine:", min_value=0, value=int(st.session_state.p_pag or 0))
+        stato = st.selectbox("Stato Iniziale:", ["Da Iniziare ⏳", "In Lettura 📖", "Letti ✨"])
+        mood = st.selectbox("Che tipo di 'vibes' ha questo libro?", [
+            "☕ Tisana, coperta & pioggia",
+            "😭 Distruzione emotiva garantita",
+            "🧠 Cervellotico / Mi farà riflettere",
+            "⚡ Colpi di scena adrenalinici",
+            "🏖️ Leggero da ombrellone",
+            "🪐 Viaggio in altri mondi"
+        ])
+        voto = st.slider("Il tuo voto (se lo hai già letto):", 0, 5, 0)
+        citazione = st.text_area("Una frase che ti ha colpito (opzionale):")
 
-    st.divider()
-    st.subheader("📚 Catalogo Libri Completo")
-    catalogo = c.execute("SELECT copertina_url, isbn, titolo, autore, editore, copie_disponibili, copie_totali FROM libri").fetchall()
-    if catalogo:
-        df = pd.DataFrame(catalogo, columns=["Copertina", "ISBN", "Titolo", "Autore", "Editore", "Disp.", "Totali"])
-        st.dataframe(
-            df,
-            column_config={
-                "Copertina": st.column_config.ImageColumn("Copertina", width="small")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info("Nessun libro a catalogo.")
-
-# -------------------------------------------------------------
-# 2. REGISTRA PRESTITO
-# -------------------------------------------------------------
-elif menu == "📋 Registra Prestito":
-    st.subheader("Registra Uscita Libro")
-
-    utenti = c.execute("SELECT id, nome, cognome FROM utenti").fetchall()
-    libri_disp = c.execute("SELECT isbn, titolo, autore, copie_disponibili, copertina_url FROM libri WHERE copie_disponibili > 0").fetchall()
-
-    if not utenti:
-        st.warning("Nessun utente registrato. Vai in 'Anagrafica Utenti'.")
-    elif not libri_disp:
-        st.warning("Nessun libro disponibile per il prestito.")
-    else:
-        diz_utenti = {f"{u[1]} {u[2]} (ID: {u[0]})": u[0] for u in utenti}
-        diz_libri = {f"{b[1]} - {b[2]} (Copie: {b[3]})": (b[0], b[4]) for b in libri_disp}
-
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            utente_sel = st.selectbox("Seleziona Utente:", list(diz_utenti.keys()))
-            libro_sel = st.selectbox("Seleziona Libro:", list(diz_libri.keys()))
-            data_inizio = st.date_input("Data Prestito:", date.today())
-
-        with col2:
-            copertina_sel = diz_libri[libro_sel][1]
-            if copertina_sel:
-                st.image(copertina_sel, width=130, caption="Libro selezionato")
-
-        if st.button("Conferma Prestito", type="primary"):
-            id_utente = diz_utenti[utente_sel]
-            isbn_libro = diz_libri[libro_sel][0]
-
-            c.execute("INSERT INTO prestiti (isbn, utente_id, data_prestito, stato) VALUES (?, ?, ?, 'IN CORSO')",
-                      (isbn_libro, id_utente, str(data_inizio)))
-            c.execute("UPDATE libri SET copie_disponibili = copie_disponibili - 1 WHERE isbn = ?", (isbn_libro,))
-            conn.commit()
-
-            st.success("Prestito registrato!")
-            st.rerun()
-
-# -------------------------------------------------------------
-# 3. RIENTRO PRESTITO
-# -------------------------------------------------------------
-elif menu == "🔄 Rientro Prestito":
-    st.subheader("Registra Rientro Libro")
-
-    query = '''SELECT p.id, l.titolo, u.nome, u.cognome, p.data_prestito, p.isbn, l.copertina_url
-               FROM prestiti p
-               JOIN libri l ON p.isbn = l.isbn
-               JOIN utenti u ON p.utente_id = u.id
-               WHERE p.stato = 'IN CORSO' '''
-    in_corso = c.execute(query).fetchall()
-
-    if not in_corso:
-        st.info("Nessun prestito attivo al momento.")
-    else:
-        prestiti_attivi = {f"'{p[1]}' preso da {p[2]} {p[3]} (il {p[4]})": (p[0], p[5], p[6]) for p in in_corso}
-        selezione = st.selectbox("Seleziona prestito da chiudere:", list(prestiti_attivi.keys()))
-
-        id_prestito, isbn_libro, cover = prestiti_attivi[selezione]
-        if cover:
-            st.image(cover, width=120)
-
-        if st.button("Segna come Restituito", type="primary"):
-            oggi = str(date.today())
-            c.execute("UPDATE prestiti SET stato = 'RESTITUITO', data_restituzione = ? WHERE id = ?", (oggi, id_prestito))
-            c.execute("UPDATE libri SET copie_disponibili = copie_disponibili + 1 WHERE isbn = ?", (isbn_libro,))
-            conn.commit()
-
-            st.success("Libro restituito!")
-            st.rerun()
-
-# -------------------------------------------------------------
-# 4. ANAGRAFICA UTENTI
-# -------------------------------------------------------------
-elif menu == "👥 Anagrafica Utenti":
-    st.subheader("Aggiungi Nuovo Utente")
-    col_n, col_c = st.columns(2)
-    nome = col_n.text_input("Nome:")
-    cognome = col_c.text_input("Cognome:")
-    col_e, col_t = st.columns(2)
-    email = col_e.text_input("Email (opzionale):")
-    telefono = col_t.text_input("Telefono (opzionale):")
-
-    if st.button("Registra Utente", type="primary"):
-        if nome.strip() and cognome.strip():
-            c.execute("INSERT INTO utenti (nome, cognome, email, telefono) VALUES (?, ?, ?, ?)",
-                      (nome.strip(), cognome.strip(), email.strip(), telefono.strip()))
-            conn.commit()
-            st.success(f"Utente '{nome} {cognome}' registrato!")
-            st.rerun()
+    with c2:
+        copertina = st.text_input("URL Copertina:", value=st.session_state.p_cov)
+        if copertina:
+            st.image(copertina, width=160, caption="Copertina")
+            
+    if st.button("📥 Aggiungi alla Mia Tana", type="primary"):
+        if not titolo.strip():
+            st.error("Il titolo è obbligatorio!")
         else:
-            st.error("Nome e Cognome sono obbligatori.")
+            isbn_salva = re.sub(r"[^0-9Xx]", "", isbn_input or "").upper() or f"LIB-{random.randint(1000, 9999)}"
+            c.execute("""INSERT INTO miei_libri (isbn, titolo, autore, copertina_url, pagine, stato, voto, mood, citazione, data_aggiunta)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (isbn_salva, titolo, autore, copertina, pagine, stato, voto, mood, citazione, str(datetime.now().date())))
+            conn.commit()
+            st.success(f"'{titolo}' è entrato a far parte della tua libreria!")
+            st.balloons()
 
+# -------------------------------------------------------------
+# 3. L'ORACOLO DELLA LETTURA (FUN FEATURE)
+# -------------------------------------------------------------
+elif scelta == "🔮 L'Oracolo della Lettura":
+    st.title("🔮 L'Oracolo del Prossimo Libro")
+    st.caption("Blocco del lettore? Lascia che sia il destino a scegliere cosa leggerai stasera.")
+    
+    da_leggere = c.execute("SELECT titolo, autore, copertina_url, mood, pagine FROM miei_libri WHERE stato = 'Da Iniziare ⏳'").fetchall()
+    
+    if not da_leggere:
+        st.warning("La tua pila di libri 'Da Iniziare' è vuota! Aggiungi qualche libro prima di interrogare l'Oracolo.")
+    else:
+        st.write(f"Attualmente hai **{len(da_leggere)}** libri in attesa sulla tua pila.")
+        
+        frasi_oracolo = [
+            "Le stelle hanno parlato: questo libro ti terrà sveglio fino alle 3 del mattino.",
+            "Prepara una tisana calda, spegni il telefono e apri questa pagina.",
+            "Il destino esige che tu legga proprio questo volume adesso.",
+            "Niente scuse, la tua prossima avventura è qui!"
+        ]
+        
+        if st.button("✨ Invoca l'Oracolo ✨", type="primary"):
+            libro_scelto = random.choice(da_leggere)
+            st.snow()
+            
+            st.divider()
+            c_img, c_desc = st.columns([1, 2])
+            with c_img:
+                if libro_scelto[2]:
+                    st.image(libro_scelto[2], width=200)
+            with c_desc:
+                st.subheader(f"📖 {libro_scelto[0]}")
+                st.write(f"di **{libro_scelto[1]}**")
+                st.info(f"🔮 Responso: *{random.choice(frasi_oracolo)}*")
+                st.markdown(f"**Vibes:** `{libro_scelto[3]}`")
+                if libro_scelto[4] > 0:
+                    st.caption(f"Lunghezza: {libro_scelto[4]} pagine")
+
+# -------------------------------------------------------------
+# 4. SFIDE & TROFEI
+# -------------------------------------------------------------
+elif scelta == "🏆 Sfide & Trofei":
+    st.title("🏆 I Tuoi Traguardi Letterari")
+    
+    # Statistiche rapide
+    letti = c.execute("SELECT COUNT(*), SUM(pagine) FROM miei_libri WHERE stato = 'Letti ✨'").fetchone()
+    num_letti = letti[0] or 0
+    pag_lette = letti[1] or 0
+    
+    in_corso = c.execute("SELECT COUNT(*) FROM miei_libri WHERE stato = 'In Lettura 📖'").fetchone()[0]
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Libri Finiti ✨", num_letti)
+    col2.metric("In Lettura Ora 📖", in_corso)
+    col3.metric("Pagine Divorate 📄", pag_lette)
+    
     st.divider()
-    st.subheader("Utenti Registrati")
-    lista_utenti = c.execute("SELECT id, nome, cognome, email, telefono FROM utenti").fetchall()
-    if lista_utenti:
-        df_u = pd.DataFrame(lista_utenti, columns=["ID", "Nome", "Cognome", "Email", "Telefono"])
-        st.dataframe(df_u, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nessun utente registrato.")
+    
+    # Sfida Annuale
+    st.subheader("🎯 Sfida di Lettura 2025")
+    obiettivo = st.slider("Il tuo obiettivo annuale di libri:", min_value=1, max_value=100, value=12)
+    percentuale = min(num_letti / obiettivo, 1.0)
+    st.progress(percentuale)
+    st.write(f"Hai letto **{num_letti}** su **{obiettivo}** libri ({int(percentuale*100)}% completato).")
+    
+    st.divider()
+    
+    # Badge Sbloccabili
+    st.subheader("🎖️ Trofei Personali")
+    
+    b1, b2, b3, b4 = st.columns(4)
+    with b1:
+        if num_letti >= 1:
+            st.success("🌱 **Primo Passo**\nHai letto il tuo 1° libro!")
+        else:
+            st.caption("🔒 *Primo Passo*\n(Leggi 1 libro)")
+            
+    with b2:
+        if num_letti >= 5:
+            st.success("📚 **Topo di Biblioteca**\n5 libri completati!")
+        else:
+            st.caption("🔒 *Topo di Biblioteca*\n(Leggi 5 libri)")
 
-# -------------------------------------------------------------
-# 5. STORICO PRESTITI
-# -------------------------------------------------------------
-elif menu == "📊 Storico Prestiti":
-    st.subheader("Riepilogo Totale Movimenti")
-    query = '''SELECT l.copertina_url, l.titolo, p.isbn, u.nome || ' ' || u.cognome as utente, 
-                      p.data_prestito, p.data_restituzione, p.stato 
-               FROM prestiti p
-               JOIN libri l ON p.isbn = l.isbn
-               JOIN utenti u ON p.utente_id = u.id
-               ORDER BY p.id DESC'''
-    storico = c.execute(query).fetchall()
-    if storico:
-        df_s = pd.DataFrame(storico, columns=["Copertina", "Titolo", "ISBN", "Utente", "Data Prestito", "Data Reso", "Stato"])
-        st.dataframe(
-            df_s,
-            column_config={
-                "Copertina": st.column_config.ImageColumn("Copertina", width="small")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info("Nessuna movimentazione registrata.")
+    with b3:
+        if pag_lette >= 1000:
+            st.success("⚡ **Macina-Pagine**\nOltre 1.000 pagine lette!")
+        else:
+            st.caption("🔒 *Macina-Pagine*\n(Raggiungi 1.000 pagine)")
+
+    with b4:
+        if num_letti >= 15:
+            st.success("🐲 **Signore dei Draghi**\n15+ libri letti!")
+        else:
+            st.caption("🔒 *Signore dei Draghi*\n(Leggi 15 libri)")
 
 conn.close()
