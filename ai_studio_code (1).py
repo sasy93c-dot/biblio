@@ -145,15 +145,36 @@ def mostra_cover(src, **kw):
     except Exception:
         st.caption("Copertina non disponibile")
 
-def leggi_barcode(img_bytes):
-    """Legge un codice EAN/ISBN da una foto. Ritorna l'ISBN o None."""
+def _leggi_zx(img):
     import zxingcpp
-    from PIL import Image
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    for r in zxingcpp.read_barcodes(img):
-        t = re.sub(r"[^0-9Xx]", "", r.text).upper()
-        if len(t) in (10, 13):
-            return t
+    for kw in ({"formats": zxingcpp.BarcodeFormat.EAN13, "try_rotate": True, "try_downscale": True},
+               {"try_rotate": True, "try_downscale": True}, {}):
+        try:
+            for r in zxingcpp.read_barcodes(img, **kw):
+                t = re.sub(r"[^0-9Xx]", "", r.text).upper()
+                if len(t) in (10, 13):
+                    return t
+        except TypeError:
+            continue
+    return None
+
+def leggi_barcode(img_bytes):
+    """Legge un ISBN da una foto provando ritagli, scale e filtri diversi."""
+    from PIL import Image, ImageOps, ImageFilter
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(img_bytes))).convert("RGB")
+    img.thumbnail((2400, 2400))
+    w, h = img.size
+    regioni = [img,
+               img.crop((int(w * .1), int(h * .2), int(w * .9), int(h * .8))),
+               img.crop((int(w * .2), int(h * .3), int(w * .8), int(h * .7)))]
+    for reg in regioni:
+        g = ImageOps.autocontrast(ImageOps.grayscale(reg), cutoff=2)
+        for scala in (1.0, 0.6, 0.4, 1.6):
+            v = g if scala == 1.0 else g.resize((max(1, int(g.width * scala)), max(1, int(g.height * scala))), Image.LANCZOS)
+            for variante in (v, v.filter(ImageFilter.SHARPEN), v.point(lambda p: 255 if p > 128 else 0)):
+                t = _leggi_zx(variante)
+                if t:
+                    return t
     return None
 
 # --- STILI GRAFICI ---
@@ -259,8 +280,12 @@ elif scelta == "➕ Aggiungi un Libro":
             st.session_state[k] = default
 
     with st.expander("📷 Scansiona il codice a barre con la fotocamera"):
-        st.caption("Inquadra il codice a barre sul retro del libro, ben illuminato e a fuoco, e scatta.")
-        foto = st.camera_input("Fotocamera", label_visibility="collapsed")
+        st.caption("Consiglio: su telefono usa il primo riquadro, che apre la fotocamera del telefono (messa a fuoco e qualita' migliori). "
+                   "Avvicinati finche' il codice a barre occupa buona parte della foto, con luce uniforme e senza riflessi.")
+        foto_file = st.file_uploader("📱 Scatta o carica una foto del codice a barre",
+                                     type=["jpg", "jpeg", "png", "webp"], key="scan_file")
+        foto_cam = st.camera_input("...oppure usa la webcam", key="scan_cam")
+        foto = foto_file or foto_cam
         if foto:
             try:
                 codice = leggi_barcode(foto.getvalue())
