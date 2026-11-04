@@ -12,13 +12,13 @@ import streamlit.components.v1 as components
 from datetime import datetime, date
 
 # =============================================================
-# CONFIGURAZIONE PAGINA
+# CONFIGURAZIONE PAGINA (Mobile-friendly)
 # =============================================================
 st.set_page_config(
     page_title="BookNook - La Mia Tana dei Libri",
     layout="wide",
     page_icon="📖",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 DB_FILE = "mia_libreria.db"
@@ -94,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookApp/4.0"}
+HEADERS = {"User-Agent": "BookNookMobile/1.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -205,17 +205,6 @@ def cerca_info_libro(isbn_grezzo):
 
     return totale
 
-# =============================================================
-# GESTIONE COPERTINE
-# =============================================================
-def immagine_a_data_uri(file):
-    from PIL import Image
-    img = Image.open(file).convert("RGB")
-    img.thumbnail((450, 650))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=82)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-
 def mostra_cover(src, **kw):
     try:
         if src and src.startswith("data:image"):
@@ -233,18 +222,18 @@ def mostra_cover(src, **kw):
 st.markdown("""
 <style>
   .hero{background:linear-gradient(135deg,#7b2ff7 0%,#f107a3 55%,#ff9a3c 100%);color:#fff;border-radius:18px;
-        padding:22px 28px;margin-bottom:20px;box-shadow:0 8px 24px rgba(123,47,247,.25)}
-  .hero h1{margin:0;font-size:1.85rem;color:#fff}
-  .hero p{margin:.3rem 0 0;font-size:1.02rem;opacity:.95;color:#fff}
-  .quote{border-left:5px solid #ffcf5c;padding:12px 18px;border-radius:0 14px 14px 0;
+        padding:20px;margin-bottom:18px;box-shadow:0 8px 24px rgba(123,47,247,.25)}
+  .hero h1{margin:0;font-size:1.7rem;color:#fff}
+  .hero p{margin:.3rem 0 0;font-size:0.95rem;opacity:.95;color:#fff}
+  .quote{border-left:5px solid #ffcf5c;padding:12px 16px;border-radius:0 14px 14px 0;
          background:rgba(255,207,92,.12);font-style:italic}
   div[data-testid="stMetric"]{background:rgba(179,107,255,.09);border:1px solid rgba(179,107,255,.22);
-         padding:12px 16px;border-radius:16px}
+         padding:10px 14px;border-radius:14px}
   .stButton>button{border-radius:12px;font-weight:600}
   .badge-on{background:linear-gradient(135deg,rgba(255,207,92,.22),rgba(241,7,163,.18));
-            border:1px solid rgba(255,207,92,.65);border-radius:16px;padding:12px;text-align:center;margin-bottom:8px}
+            border:1px solid rgba(255,207,92,.65);border-radius:14px;padding:10px;text-align:center;margin-bottom:8px}
   .badge-off{background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.2);
-             border-radius:16px;padding:12px;text-align:center;opacity:.55;margin-bottom:8px}
+             border-radius:14px;padding:10px;text-align:center;opacity:.55;margin-bottom:8px}
 </style>
 """, unsafe_allow_html=True)
 
@@ -311,209 +300,36 @@ xp_tot = calcola_xp(c)
 lv_nome, lv_frac, lv_mancano, lv_prox = livello(xp_tot)
 
 st.sidebar.title("☕ BookNook")
-st.sidebar.caption("Il tuo rifugio letterario personale")
+st.sidebar.caption("Il tuo rifugio letterario tascabile")
 st.sidebar.markdown(f"**{lv_nome}**")
 st.sidebar.progress(lv_frac)
 st.sidebar.caption(f"⭐ **{xp_tot} XP**" + (f" · Mancano {lv_mancano} XP per {lv_prox}" if lv_prox else " · Livello Massimo!"))
 
-scelta = st.sidebar.radio("Esplora:", [
+scelta = st.sidebar.radio("Menu:", [
+    "⚡ Scansione Veloce",
     "🏠 Il Mio Rifugio",
     "🛋️ La Mia Libreria",
-    "⚡ Scansione Veloce",
     "➕ Aggiungi a Mano",
     "🔮 L'Oracolo",
     "📊 Statistiche",
     "🏆 Sfide & Trofei",
 ])
 
-try:
-    with open(DB_FILE, "rb") as f:
-        st.sidebar.download_button("💾 Esporta Backup Database", f.read(), file_name="mia_libreria_backup.db")
-except Exception:
-    pass
-
 # =============================================================
-# 1. IL MIO RIFUGIO (HOME)
+# 1. SCANSIONE VELOCE (100% Client-Side su Smartphone)
 # =============================================================
-if scelta == "🏠 Il Mio Rifugio":
-    ora = datetime.now().hour
-    saluto = "Buongiorno" if ora < 12 else "Buon pomeriggio" if ora < 18 else "Buonasera"
-    st.markdown(f'<div class="hero"><h1>{saluto}, lettore! 📖</h1>'
-                f'<p>{lv_nome} · {xp_tot} Punti Esperienza accumulati</p></div>', unsafe_allow_html=True)
-
-    s = statistiche(c)
-    in_corso_n = c.execute("SELECT COUNT(*) FROM miei_libri WHERE stato = 'In Lettura 📖'").fetchone()[0]
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Libri Catalogati 📚", s["totale"])
-    m2.metric("Completati ✨", s["letti"])
-    m3.metric("In Lettura Ora 📖", in_corso_n)
-    m4.metric("Pagine Lette 📄", s["pagine"])
-
-    st.subheader("📖 Attualmente In Lettura")
-    in_lettura = c.execute("SELECT * FROM miei_libri WHERE stato = 'In Lettura 📖' ORDER BY rowid DESC").fetchall()
-    if not in_lettura:
-        st.info("Non stai leggendo nessun libro al momento. Scegline uno dalla libreria o chiedi a **L'Oracolo** 🔮!")
-    else:
-        for b in in_lettura:
-            with st.container(border=True):
-                ci, cd = st.columns([1, 5])
-                with ci:
-                    if b["copertina_url"]:
-                        mostra_cover(b["copertina_url"], use_container_width=True)
-                with cd:
-                    pag = b["pagine"] or 0
-                    cur = b["pagina_corrente"] or 0
-                    st.markdown(f"### {b['titolo']}")
-                    st.caption(f"di **{b['autore']}**")
-                    if pag > 0:
-                        prog = min(cur / pag, 1.0)
-                        st.progress(prog, text=f"Pagina {cur} di {pag} ({int(prog * 100)}%)")
-                    else:
-                        st.caption(f"Pagina {cur} (totale pagine non indicato)")
-
-                    b1, b2, b3, b4 = st.columns(4)
-                    for col, n in zip((b1, b2, b3), (10, 25, 50)):
-                        if col.button(f"+{n} pag.", key=f"p{n}_{b['isbn']}"):
-                            nuovo = cur + n
-                            if pag:
-                                nuovo = min(nuovo, pag)
-                            c.execute("UPDATE miei_libri SET pagina_corrente = ? WHERE isbn = ?", (nuovo, b["isbn"]))
-                            conn.commit()
-                            st.rerun()
-                    if b4.button("🏁 Finito!", key=f"fin_{b['isbn']}"):
-                        c.execute("UPDATE miei_libri SET stato = 'Letti ✨', pagina_corrente = ?, data_fine = ? WHERE isbn = ?",
-                                  (pag or cur, str(date.today()), b["isbn"]))
-                        conn.commit()
-                        st.balloons()
-                        st.toast("Complimenti per il traguardo!", icon="🏆")
-                        st.rerun()
-
-    cq, cb = st.columns(2)
-    with cq:
-        st.subheader("💬 Citazione del Giorno")
-        citazioni = c.execute("SELECT citazione, titolo FROM miei_libri WHERE citazione IS NOT NULL AND citazione != ''").fetchall()
-        if citazioni:
-            q = random.Random(str(date.today())).choice(citazioni)
-            st.markdown(f'<div class="quote">“{q["citazione"]}”<br><br><small>— Da <b>{q["titolo"]}</b></small></div>', unsafe_allow_html=True)
-        else:
-            st.caption("Salva qualche citazione dai tuoi libri preferiti per vederla apparire qui ogni giorno.")
-    with cb:
-        st.subheader("🎲 Il Consiglio della Tana")
-        pila = c.execute("SELECT * FROM miei_libri WHERE stato = 'Da Iniziare ⏳'").fetchall()
-        if pila:
-            scelto_oggi = random.Random("rec" + str(date.today())).choice(pila)
-            c_c1, c_c2 = st.columns([1, 2])
-            with c_c1:
-                if scelto_oggi["copertina_url"]:
-                    mostra_cover(scelto_oggi["copertina_url"], use_container_width=True)
-            with c_c2:
-                st.markdown(f"**{scelto_oggi['titolo']}**")
-                st.caption(f"{scelto_oggi['autore']} · {scelto_oggi['pagine'] or '?'} pagine")
-                if scelto_oggi["mood"]:
-                    st.caption(f"Vibes: `{scelto_oggi['mood']}`")
-        else:
-            st.caption("La pila 'Da Iniziare' è vuota. Aggiungi qualche nuovo volume!")
-
-# =============================================================
-# 2. LA MIA LIBRERIA
-# =============================================================
-elif scelta == "🛋️ La Mia Libreria":
-    st.markdown('<div class="hero"><h1>🛋️ I Miei Scaffali</h1><p>Tutti i tuoi volumi custoditi in un unico posto</p></div>',
-                unsafe_allow_html=True)
-
-    f1, f2, f3 = st.columns([1, 1, 2])
-    filtro_stato = f1.selectbox("Filtra per stato:", ["Tutti"] + STATI)
-    filtro_mood = f2.selectbox("Filtra per vibes:", ["Tutte"] + MOODS)
-    cerca = f3.text_input("🔎 Cerca per titolo o autore:")
-
-    sql = "SELECT * FROM miei_libri WHERE 1=1"
-    params = []
-    if filtro_stato != "Tutti":
-        sql += " AND stato = ?"
-        params.append(filtro_stato)
-    if filtro_mood != "Tutte":
-        sql += " AND mood = ?"
-        params.append(filtro_mood)
-    if cerca:
-        sql += " AND (titolo LIKE ? OR autore LIKE ?)"
-        params += [f"%{cerca}%", f"%{cerca}%"]
-
-    libri = c.execute(sql + " ORDER BY rowid DESC", params).fetchall()
-
-    if not libri:
-        st.info("Nessun libro trovato.")
-    else:
-        st.caption(f"Mostrando **{len(libri)}** volumi")
-        cols = st.columns(3)
-        for i, b in enumerate(libri):
-            isbn = b["isbn"]
-            voto = b["voto"] or 0
-            pag = b["pagine"] or 0
-            with cols[i % 3]:
-                with st.container(border=True):
-                    c_img, c_txt = st.columns([1, 2])
-                    with c_img:
-                        if b["copertina_url"]:
-                            mostra_cover(b["copertina_url"], use_container_width=True)
-                    with c_txt:
-                        st.subheader(b["titolo"])
-                        st.caption(f"✍️ {b['autore']}")
-                        st.write(f"**{b['stato']}**")
-                        if voto > 0:
-                            st.write("⭐" * voto)
-                        if pag > 0:
-                            st.caption(f"📄 {pag} pag.")
-                    if b["mood"]:
-                        st.caption(f"🏷️ `{b['mood']}`")
-                    if b["citazione"]:
-                        st.info(f"💬 “{b['citazione']}”")
-
-                    with st.expander("✏️ Modifica Dettagli"):
-                        if b["trama"]:
-                            st.caption(b["trama"][:350] + ("..." if len(b["trama"]) > 350 else ""))
-                        idx_stato = STATI.index(b["stato"]) if b["stato"] in STATI else 0
-                        n_stato = st.selectbox("Stato", STATI, index=idx_stato, key=f"st_{isbn}")
-                        n_pag = st.number_input("Pagine totali", min_value=0, value=pag, key=f"pg_{isbn}")
-                        n_cur = st.number_input("Pagina corrente", min_value=0, value=int(b["pagina_corrente"] or 0), key=f"cu_{isbn}")
-                        mood_lista = [""] + MOODS
-                        idx_mood = mood_lista.index(b["mood"]) if b["mood"] in mood_lista else 0
-                        n_mood = st.selectbox("Vibes", mood_lista, index=idx_mood, key=f"md_{isbn}")
-                        n_voto = st.slider("Voto", 0, 5, voto, key=f"vt_{isbn}")
-                        n_cit = st.text_area("Citazione memorabile", value=b["citazione"] or "", key=f"ct_{isbn}")
-                        
-                        bs1, bs2 = st.columns(2)
-                        if bs1.button("💾 Salva", key=f"save_{isbn}"):
-                            fine = b["data_fine"]
-                            if n_stato == "Letti ✨":
-                                n_cur = n_pag or n_cur
-                                fine = fine or str(date.today())
-                            c.execute("""UPDATE miei_libri SET stato=?, voto=?, citazione=?, pagine=?, pagina_corrente=?,
-                                         mood=?, data_fine=? WHERE isbn=?""",
-                                      (n_stato, n_voto, n_cit, n_pag, n_cur, n_mood, fine, isbn))
-                            conn.commit()
-                            st.success("Modifiche salvate!")
-                            st.rerun()
-                        if bs2.button("🗑️ Rimuovi", key=f"del_{isbn}"):
-                            c.execute("DELETE FROM miei_libri WHERE isbn = ?", (isbn,))
-                            conn.commit()
-                            st.rerun()
-
-# =============================================================
-# 3. SCANSIONE VELOCE (AUTOMATICA CONTINUA)
-# =============================================================
-elif scelta == "⚡ Scansione Veloce":
-    st.markdown('<div class="hero"><h1>⚡ Scansione Automatica Continua</h1>'
-                '<p>Inquadra il codice a barre: non devi toccare nulla, il libro viene registrato al volo.</p></div>',
+if scelta == "⚡ Scansione Veloce":
+    st.markdown('<div class="hero"><h1>⚡ Scansione Posteriore</h1>'
+                '<p>Tocca il pulsante per attivare l\'obiettivo posteriore. Scansiona e salva da sola senza cliccare.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
         if k not in st.session_state:
             st.session_state[k] = default
 
-    c_conf1, c_conf2 = st.columns([1, 1])
-    stato_raffica = c_conf1.selectbox("Salva nuovi libri come:", STATI, index=0)
+    stato_raffica = st.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Controllo se è arrivato un ISBN tramite URL automatico
+    # Controllo se è arrivato un ISBN dal lettore JavaScript
     isbn_catturato = None
     try:
         if "isbn_auto" in st.query_params:
@@ -522,46 +338,74 @@ elif scelta == "⚡ Scansione Veloce":
     except Exception:
         pass
 
-    # CODICE SCANNER CONTINUO (HTML5 + BarcodeDetector + Bip sonoro)
-    HTML_AUTO_SCANNER = """
+    # Componente HTML / JS isolato con accesso hardware alla fotocamera posteriore
+    HTML_SCANNER_SMARTPHONE = """
     <!DOCTYPE html>
     <html>
     <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
-      body { margin: 0; font-family: system-ui, sans-serif; background: transparent; color: #fff; }
-      #box { position: relative; width: 100%; max-width: 580px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: #0c081a; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
-      video { width: 100%; height: 350px; object-fit: cover; display: block; background: #000; }
-      #target { position: absolute; left: 10%; right: 10%; top: 22%; bottom: 22%; border: 3px solid #ffcf5c; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); pointer-events: none; }
-      #line { position: absolute; left: 12%; right: 12%; height: 3px; background: #ff4d6d; top: 50%; box-shadow: 0 0 8px #ff4d6d; animation: laser 1.6s infinite ease-in-out alternate; pointer-events: none; }
-      @keyframes laser { from { top: 26%; } to { top: 74%; } }
-      #btn-start { width: 100%; max-width: 580px; margin: 10px auto 0; display: block; padding: 14px; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; cursor: pointer; color: #fff; background: linear-gradient(135deg, #7b2ff7, #f107a3); }
-      #status { width: 100%; max-width: 580px; margin: 10px auto 0; padding: 10px; border-radius: 10px; background: #211933; font-size: 14px; text-align: center; border-left: 4px solid #7b2ff7; box-sizing: border-box; }
+      body { margin: 0; background: transparent; font-family: -apple-system, system-ui, sans-serif; color: #fff; }
+      #card { background: #0c081c; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); }
+      #view-container { position: relative; width: 100%; height: 350px; background: #000; display: flex; align-items: center; justify-content: center; }
+      video { width: 100%; height: 100%; object-fit: cover; display: none; }
+      #start-screen { text-align: center; padding: 25px 15px; }
+      .big-icon { font-size: 3.5rem; margin-bottom: 10px; }
+      .btn-main { background: linear-gradient(135deg,#7b2ff7,#f107a3); color: #fff; border: none; padding: 14px 28px; border-radius: 14px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(123,47,247,0.4); }
+      #scan-frame { display: none; position: absolute; left: 8%; right: 8%; top: 22%; bottom: 22%; border: 3px solid #ffcf5c; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.42); pointer-events: none; }
+      #laser-line { position: absolute; left: 5%; right: 5%; height: 3px; background: #ff4d6d; top: 50%; box-shadow: 0 0 10px #ff4d6d; animation: sweep 1.6s infinite alternate ease-in-out; }
+      @keyframes sweep { from { top: 25%; } to { top: 75%; } }
+      #controls-bar { display: none; position: absolute; bottom: 12px; left: 0; right: 0; justify-content: center; gap: 10px; z-index: 10; }
+      .btn-sub { background: #231b36; color: #fff; border: 1px solid #7b2ff7; padding: 8px 14px; border-radius: 10px; font-weight: bold; font-size: 13px; }
+      #status-msg { padding: 12px; background: #1c152d; font-size: 13px; text-align: center; border-left: 4px solid #7b2ff7; }
     </style>
     </head>
     <body>
-    <div id="box">
-      <video id="v" playsinline muted></video>
-      <div id="target"></div>
-      <div id="line"></div>
-    </div>
-    <button id="btn-start">📷 Clicca per Attivare Fotocamera Automatica</button>
-    <div id="status">Premi il pulsante sopra per iniziare la scansione continua.</div>
+    <div id="card">
+      <div id="view-container">
+        <video id="v" playsinline autoplay muted></video>
+        
+        <div id="start-screen">
+          <div class="big-icon">📷</div>
+          <h3 style="margin:0 0 8px;">Fotocamera Posteriore</h3>
+          <p style="margin:0 0 18px;color:#aaa;font-size:13px;">Nessuna app o pip da installare.<br>Tocca qui sotto per inquadrare i codici.</p>
+          <button id="btn-start" class="btn-main">▶️ Avvia Fotocamera Posteriore</button>
+        </div>
 
+        <div id="scan-frame"><div id="laser-line"></div></div>
+
+        <div id="controls-bar">
+          <button id="btn-torch" class="btn-sub">🔦 Torcia</button>
+          <button id="btn-stop" class="btn-sub" style="border-color:#ff4d6d;color:#ff4d6d;">⏹ Ferma</button>
+        </div>
+      </div>
+      <div id="status-msg">In attesa di avvio fotocamera...</div>
+    </div>
+
+    <!-- ZXing CDN come fallback universale -->
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+
     <script>
+    (function(){
       var v = document.getElementById("v");
-      var btn = document.getElementById("btn-start");
-      var status = document.getElementById("status");
+      var startScreen = document.getElementById("start-screen");
+      var scanFrame = document.getElementById("scan-frame");
+      var controlsBar = document.getElementById("controls-bar");
+      var statusMsg = document.getElementById("status-msg");
+      var btnStart = document.getElementById("btn-start");
+      var btnTorch = document.getElementById("btn-torch");
+      var btnStop = document.getElementById("btn-stop");
+
       var stream = null;
-      var active = false;
+      var track = null;
+      var running = false;
       var lastCode = "";
       var lastTime = 0;
 
-      function setStatus(t, err) {
-        status.textContent = t;
-        status.style.borderLeftColor = err ? "#ff4d6d" : "#7b2ff7";
+      function setStatus(t, isErr) {
+        statusMsg.textContent = t;
+        statusMsg.style.borderLeftColor = isErr ? "#ff4d6d" : "#7b2ff7";
       }
 
       function beep() {
@@ -579,86 +423,152 @@ elif scelta == "⚡ Scansione Veloce":
       function onDetected(raw) {
         var d = String(raw).replace(/[^0-9Xx]/g, "").toUpperCase();
         if (!((d.length === 13 && /^97[89]/.test(d)) || d.length === 10)) return;
-        
+
         var now = Date.now();
-        if (d === lastCode && (now - lastTime) < 4000) return;
+        if (d === lastCode && (now - lastTime) < 4500) return;
         lastCode = d;
         lastTime = now;
 
         beep();
-        if (navigator.vibrate) navigator.vibrate(120);
-        setStatus("✅ Letto: " + d + " — Registrazione in corso...");
+        if (navigator.vibrate) navigator.vibrate(140);
+        setStatus("✅ Rilevato: " + d + "! Registrazione in corso...");
 
-        // Ricarica la pagina madre con l'ISBN rilevato
         try {
-          var url = new URL(window.parent.location.href);
-          url.searchParams.set("isbn_auto", d);
-          window.parent.location.href = url.href;
+          var pUrl = new URL(window.parent.location.href);
+          pUrl.searchParams.set("isbn_auto", d);
+          window.parent.location.href = pUrl.href;
         } catch(e) {
-          // Fallback se il browser blocca l'accesso cross-frame
-          window.parent.postMessage({isbn_auto: d}, "*");
+          window.parent.location.search = "?isbn_auto=" + d;
         }
       }
 
-      async function startCam() {
+      async function openRearCamera() {
+        setStatus("Connessione all'obiettivo posteriore...", false);
+        var nav = (window.parent && window.parent.navigator && window.parent.navigator.mediaDevices) ? window.parent.navigator : navigator;
+
+        if (!nav.mediaDevices || !nav.mediaDevices.getUserMedia) {
+          setStatus("⚠️ Errore: fotocamera non accessibile (richiede HTTPS o permessi concessi).", true);
+          return;
+        }
+
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false
-          });
+          // 1. Tenta la ricerca dell'ID fotocamera posteriore tra i dispositivi hardware
+          var devices = await nav.mediaDevices.enumerateDevices();
+          var videoDevs = devices.filter(function(d){ return d.kind === "videoinput"; });
+          var targetId = null;
+
+          for (var i = 0; i < videoDevs.length; i++) {
+            var lbl = (videoDevs[i].label || "").toLowerCase();
+            if (lbl.includes("back") || lbl.includes("rear") || lbl.includes("posteriore") || lbl.includes("environment") || lbl.includes("0")) {
+              targetId = videoDevs[i].deviceId;
+              break;
+            }
+          }
+          if (!targetId && videoDevs.length > 1) {
+            targetId = videoDevs[videoDevs.length - 1].deviceId; // Ultimo dispositivo = quasi sempre il retro
+          }
+
+          var constraints = {
+            audio: false,
+            video: targetId 
+              ? { deviceId: { exact: targetId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          };
+
+          stream = await nav.mediaDevices.getUserMedia(constraints);
           v.srcObject = stream;
           await v.play();
-          active = true;
-          btn.style.display = "none";
-          setStatus("Scanner attivo! Passa il codice a barre davanti alla fotocamera.");
+          track = stream.getVideoTracks()[0];
+          running = true;
 
-          // Metodo 1: BarcodeDetector nativo hardware
+          startScreen.style.display = "none";
+          v.style.display = "block";
+          scanFrame.style.display = "block";
+          controlsBar.style.display = "flex";
+          setStatus("🟢 Fotocamera posteriore attiva! Inquadra il codice a barre.", false);
+
+          // Autofocus continuo su dispositivi supportati
+          if (track && track.getCapabilities) {
+            var caps = track.getCapabilities();
+            if (caps.focusMode && caps.focusMode.includes("continuous")) {
+              track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function(){});
+            }
+          }
+
+          // RICONOSCIMENTO VELOCE 1: API Hardware BarcodeDetector
           if ("BarcodeDetector" in window) {
             try {
               var det = new BarcodeDetector({ formats: ["ean_13"] });
               (function loop(){
-                if (!active) return;
-                det.detect(v).then(function(res){
-                  if (res.length > 0) onDetected(res[0].rawValue);
-                }).catch(function(){}).then(function(){
-                  setTimeout(loop, 70);
-                });
+                if (!running) return;
+                if (v.readyState >= 2) {
+                  det.detect(v).then(function(codes){
+                    if (codes.length > 0) onDetected(codes[0].rawValue);
+                  }).catch(function(){});
+                }
+                setTimeout(loop, 75);
               })();
               return;
             } catch(e){}
           }
 
-          // Metodo 2: ZXing library continuo
+          // RICONOSCIMENTO VELOCE 2: Fallback libreria ZXing
           if (window.ZXing) {
             var hints = new Map();
             hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
             var reader = new ZXing.BrowserMultiFormatReader(hints);
             reader.decodeFromVideoElement(v, function(res){
-              if (res) onDetected(res.getText());
+              if (res && running) onDetected(res.getText());
             });
           }
+
         } catch(err) {
-          setStatus("Errore fotocamera: " + err.name + ". Verifica i permessi o la connessione HTTPS.", true);
+          setStatus("Impossibile avviare fotocamera posteriore: " + err.name, true);
         }
       }
 
-      btn.addEventListener("click", startCam);
+      function stopCamera() {
+        running = false;
+        if (stream) {
+          stream.getTracks().forEach(function(t){ t.stop(); });
+          stream = null;
+        }
+        v.srcObject = null;
+        v.style.display = "none";
+        scanFrame.style.display = "none";
+        controlsBar.style.display = "none";
+        startScreen.style.display = "block";
+        setStatus("Fotocamera ferma. Tocca per riavviare.", false);
+      }
+
+      btnStart.addEventListener("click", openRearCamera);
+      btnStop.addEventListener("click", stopCamera);
+
+      var torchState = false;
+      btnTorch.addEventListener("click", function(){
+        if (track && track.applyConstraints) {
+          torchState = !torchState;
+          track.applyConstraints({ advanced: [{ torch: torchState }] }).catch(function(){
+            alert("Luce flash non supportata da questo sensore.");
+          });
+        }
+      });
+    })();
     </script>
     </body>
     </html>
     """
 
-    # Mostra il box dello scanner automatico
-    components.html(HTML_AUTO_SCANNER, height=480)
+    components.html(HTML_SCANNER_SMARTPHONE, height=430)
 
-    # Inserimento manuale istantaneo per chi usa una pistola barcode USB
-    with st.expander("⌨️ Oppure usa un lettore barcode USB o digita a mano:"):
+    # Inserimento manuale rapido / barcode gun
+    with st.expander("⌨️ Oppure digita l'ISBN a mano:"):
         with st.form("form_pistola", clear_on_submit=True):
-            input_pistola = st.text_input("Codice ISBN (premi Invio per salvare):", placeholder="Es. 9788804668237")
+            input_pistola = st.text_input("Codice ISBN:", placeholder="Es. 9788804668237")
             if st.form_submit_button("Aggiungi Subito") and input_pistola.strip():
                 isbn_catturato = pulisci_isbn(input_pistola)
 
-    # Se un libro è stato catturato (automaticamente dalla cam o da pistola)
+    # Processamento automatico libro rilevato
     if isbn_catturato:
         isbn = isbn_catturato
         esiste = c.execute("SELECT titolo FROM miei_libri WHERE isbn = ?", (isbn,)).fetchone()
@@ -679,17 +589,17 @@ elif scelta == "⚡ Scansione Veloce":
                 if isbn not in st.session_state.non_trovati:
                     st.session_state.non_trovati.append(isbn)
                 st.toast(f"ISBN {isbn} non trovato online", icon="⚠️")
-                st.session_state.log_scan.insert(0, f"⚠️ ISBN {isbn} non trovato online: completalo qui sotto")
+                st.session_state.log_scan.insert(0, f"⚠️ ISBN {isbn} non trovato online: salvalo qui sotto")
 
     st.subheader("📋 Registro Scansioni Recenti")
     if st.session_state.log_scan:
-        for riga in st.session_state.log_scan[:8]:
+        for riga in st.session_state.log_scan[:6]:
             st.markdown(riga)
     else:
-        st.caption("I libri scansionati appariranno qui man mano che li inquadri.")
+        st.caption("I libri scansionati compariranno qui in tempo reale.")
 
     for isbn_mancante in list(st.session_state.non_trovati):
-        with st.expander(f"⚠️ Completa manualmente: {isbn_mancante}", expanded=True):
+        with st.expander(f"⚠️ Salva manualmente: {isbn_mancante}", expanded=True):
             nt = st.text_input("Titolo del volume", key=f"nt_{isbn_mancante}")
             na = st.text_input("Autore", key=f"na_{isbn_mancante}")
             np = st.number_input("Pagine", min_value=0, key=f"np_{isbn_mancante}")
@@ -705,199 +615,238 @@ elif scelta == "⚡ Scansione Veloce":
                     st.error("Il titolo è obbligatorio.")
 
 # =============================================================
+# 2. IL MIO RIFUGIO (HOME)
+# =============================================================
+elif scelta == "🏠 Il Mio Rifugio":
+    ora = datetime.now().hour
+    saluto = "Buongiorno" if ora < 12 else "Buon pomeriggio" if ora < 18 else "Buonasera"
+    st.markdown(f'<div class="hero"><h1>{saluto}, lettore! 📖</h1>'
+                f'<p>{lv_nome} · {xp_tot} Punti Esperienza</p></div>', unsafe_allow_html=True)
+
+    s = statistiche(c)
+    in_corso_n = c.execute("SELECT COUNT(*) FROM miei_libri WHERE stato = 'In Lettura 📖'").fetchone()[0]
+    m1, m2 = st.columns(2)
+    m1.metric("Libri Catalogati 📚", s["totale"])
+    m2.metric("Completati ✨", s["letti"])
+    m3, m4 = st.columns(2)
+    m3.metric("In Lettura Ora 📖", in_corso_n)
+    m4.metric("Pagine Lette 📄", s["pagine"])
+
+    st.subheader("📖 Attualmente In Lettura")
+    in_lettura = c.execute("SELECT * FROM miei_libri WHERE stato = 'In Lettura 📖' ORDER BY rowid DESC").fetchall()
+    if not in_lettura:
+        st.info("Non stai leggendo nessun libro al momento. Scegline uno dalla libreria o chiedi a **L'Oracolo** 🔮!")
+    else:
+        for b in in_lettura:
+            with st.container(border=True):
+                ci, cd = st.columns([1, 4])
+                with ci:
+                    if b["copertina_url"]:
+                        mostra_cover(b["copertina_url"], use_container_width=True)
+                with cd:
+                    pag = b["pagine"] or 0
+                    cur = b["pagina_corrente"] or 0
+                    st.markdown(f"### {b['titolo']}")
+                    st.caption(f"di **{b['autore']}**")
+                    if pag > 0:
+                        prog = min(cur / pag, 1.0)
+                        st.progress(prog, text=f"Pag. {cur} di {pag} ({int(prog * 100)}%)")
+                    else:
+                        st.caption(f"Pagina {cur}")
+
+                    b1, b2, b3 = st.columns(3)
+                    if b1.button("+10 pag.", key=f"p10_{b['isbn']}"):
+                        nuovo = cur + 10
+                        if pag:
+                            nuovo = min(nuovo, pag)
+                        c.execute("UPDATE miei_libri SET pagina_corrente = ? WHERE isbn = ?", (nuovo, b["isbn"]))
+                        conn.commit()
+                        st.rerun()
+                    if b2.button("+25 pag.", key=f"p25_{b['isbn']}"):
+                        nuovo = cur + 25
+                        if pag:
+                            nuovo = min(nuovo, pag)
+                        c.execute("UPDATE miei_libri SET pagina_corrente = ? WHERE isbn = ?", (nuovo, b["isbn"]))
+                        conn.commit()
+                        st.rerun()
+                    if b3.button("🏁 Finito!", key=f"fin_{b['isbn']}"):
+                        c.execute("UPDATE miei_libri SET stato = 'Letti ✨', pagina_corrente = ?, data_fine = ? WHERE isbn = ?",
+                                  (pag or cur, str(date.today()), b["isbn"]))
+                        conn.commit()
+                        st.balloons()
+                        st.toast("Complimenti!", icon="🏆")
+                        st.rerun()
+
+    st.subheader("💬 Citazione del Giorno")
+    citazioni = c.execute("SELECT citazione, titolo FROM miei_libri WHERE citazione IS NOT NULL AND citazione != ''").fetchall()
+    if citazioni:
+        q = random.Random(str(date.today())).choice(citazioni)
+        st.markdown(f'<div class="quote">“{q["citazione"]}”<br><br><small>— Da <b>{q["titolo"]}</b></small></div>', unsafe_allow_html=True)
+    else:
+        st.caption("Salva qualche citazione dai tuoi libri preferiti per vederla apparire qui ogni giorno.")
+
+# =============================================================
+# 3. LA MIA LIBRERIA
+# =============================================================
+elif scelta == "🛋️ La Mia Libreria":
+    st.markdown('<div class="hero"><h1>🛋️ I Miei Scaffali</h1><p>Tutti i tuoi volumi</p></div>', unsafe_allow_html=True)
+
+    filtro_stato = st.selectbox("Filtra per stato:", ["Tutti"] + STATI)
+    cerca = st.text_input("🔎 Cerca titolo o autore:")
+
+    sql = "SELECT * FROM miei_libri WHERE 1=1"
+    params = []
+    if filtro_stato != "Tutti":
+        sql += " AND stato = ?"
+        params.append(filtro_stato)
+    if cerca:
+        sql += " AND (titolo LIKE ? OR autore LIKE ?)"
+        params += [f"%{cerca}%", f"%{cerca}%"]
+
+    libri = c.execute(sql + " ORDER BY rowid DESC", params).fetchall()
+
+    if not libri:
+        st.info("Nessun libro trovato.")
+    else:
+        for b in libri:
+            isbn = b["isbn"]
+            voto = b["voto"] or 0
+            pag = b["pagine"] or 0
+            with st.container(border=True):
+                c_img, c_txt = st.columns([1, 3])
+                with c_img:
+                    if b["copertina_url"]:
+                        mostra_cover(b["copertina_url"], use_container_width=True)
+                with c_txt:
+                    st.subheader(b["titolo"])
+                    st.caption(f"✍️ {b['autore']}")
+                    st.write(f"**{b['stato']}**")
+                    if voto > 0:
+                        st.write("⭐" * voto)
+                    if pag > 0:
+                        st.caption(f"📄 {pag} pag.")
+                    if b["mood"]:
+                        st.caption(f"🏷️ `{b['mood']}`")
+
+                with st.expander("✏️ Modifica"):
+                    idx_stato = STATI.index(b["stato"]) if b["stato"] in STATI else 0
+                    n_stato = st.selectbox("Stato", STATI, index=idx_stato, key=f"st_{isbn}")
+                    n_pag = st.number_input("Pagine totali", min_value=0, value=pag, key=f"pg_{isbn}")
+                    n_voto = st.slider("Voto", 0, 5, voto, key=f"vt_{isbn}")
+                    n_cit = st.text_area("Citazione memorabile", value=b["citazione"] or "", key=f"ct_{isbn}")
+                    
+                    bs1, bs2 = st.columns(2)
+                    if bs1.button("💾 Salva", key=f"save_{isbn}"):
+                        fine = b["data_fine"]
+                        if n_stato == "Letti ✨":
+                            fine = fine or str(date.today())
+                        c.execute("UPDATE miei_libri SET stato=?, voto=?, citazione=?, pagine=?, data_fine=? WHERE isbn=?",
+                                  (n_stato, n_voto, n_cit, n_pag, fine, isbn))
+                        conn.commit()
+                        st.success("Modifiche salvate!")
+                        st.rerun()
+                    if bs2.button("🗑️ Rimuovi", key=f"del_{isbn}"):
+                        c.execute("DELETE FROM miei_libri WHERE isbn = ?", (isbn,))
+                        conn.commit()
+                        st.rerun()
+
+# =============================================================
 # 4. AGGIUNGI A MANO
 # =============================================================
 elif scelta == "➕ Aggiungi a Mano":
-    st.markdown('<div class="hero"><h1>✨ Aggiungi un Volume</h1>'
-                '<p>Inserisci manualmente i dettagli o cerca tramite codice ISBN.</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>✨ Aggiungi Volume</h1><p>Compilazione manuale o ricerca per ISBN</p></div>', unsafe_allow_html=True)
 
-    for k in ["man_tit", "man_aut", "man_cov", "man_pag", "man_gen", "man_tra"]:
-        if k not in st.session_state:
-            st.session_state[k] = "" if "pag" not in k else 0
-
-    c_isbn, c_trova = st.columns([3, 1])
-    isbn_digitato = c_isbn.text_input("Codice ISBN (10 o 13 cifre):", placeholder="Es. 9788804668237")
-    c_trova.write("")
-    if c_trova.button("🔍 Trova Magia", use_container_width=True):
-        if not isbn_digitato.strip():
-            st.error("Inserisci prima un codice ISBN.")
-        else:
+    isbn_digitato = st.text_input("Codice ISBN:", placeholder="Es. 9788804668237")
+    if st.button("🔍 Cerca Informazioni Online"):
+        if isbn_digitato.strip():
             with st.spinner("Ricerca nei cataloghi online..."):
                 trovato = cerca_info_libro(isbn_digitato)
             if trovato:
-                st.session_state.man_tit = trovato["titolo"]
-                st.session_state.man_aut = trovato["autore"]
-                st.session_state.man_cov = trovato["copertina"]
-                st.session_state.man_pag = int(trovato["pagine"] or 0)
-                st.session_state.man_gen = trovato.get("generi", "")
-                st.session_state.man_tra = trovato.get("trama", "")
-                st.success(f"Trovato: **{trovato['titolo']}**!")
+                st.session_state["m_tit"] = trovato["titolo"]
+                st.session_state["m_aut"] = trovato["autore"]
+                st.session_state["m_cov"] = trovato["copertina"]
+                st.session_state["m_pag"] = int(trovato["pagine"] or 0)
+                st.session_state["m_gen"] = trovato.get("generi", "")
+                st.session_state["m_tra"] = trovato.get("trama", "")
+                st.success("Dati libro trovati!")
             else:
-                st.warning("Nessun libro trovato con questo codice. Puoi compilare i dettagli a mano.")
+                st.warning("Nessun libro trovato con questo codice.")
 
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        titolo = st.text_input("Titolo:", value=st.session_state.man_tit)
-        autore = st.text_input("Autore:", value=st.session_state.man_aut)
-        pagine = st.number_input("Numero di Pagine:", min_value=0, value=int(st.session_state.man_pag or 0))
-        stato = st.selectbox("Stato Iniziale:", STATI)
-        mood = st.selectbox("Che 'vibes' ha questo libro?", MOODS)
-        voto = st.slider("Il tuo voto:", 0, 5, 0)
-        citazione = st.text_area("Citazione preferita (opzionale):")
-    with c2:
-        copertina = st.text_input("URL Copertina:", value=st.session_state.man_cov)
-        carica_img = st.file_uploader("Oppure carica immagine copertina:", type=["jpg", "png", "webp"])
-        if carica_img:
-            copertina = immagine_a_data_uri(carica_img)
-        if copertina:
-            mostra_cover(copertina, width=170)
+    titolo = st.text_input("Titolo:", value=st.session_state.get("m_tit", ""))
+    autore = st.text_input("Autore:", value=st.session_state.get("m_aut", ""))
+    pagine = st.number_input("Pagine:", min_value=0, value=st.session_state.get("m_pag", 0))
+    stato = st.selectbox("Stato:", STATI)
+    mood = st.selectbox("Vibes:", MOODS)
+    copertina = st.text_input("URL Copertina:", value=st.session_state.get("m_cov", ""))
 
-    if st.button("📥 Salva Volume nella Tana", type="primary", use_container_width=True):
+    if st.button("📥 Salva nella Libreria", type="primary"):
         if not titolo.strip():
             st.error("Il titolo è obbligatorio!")
         else:
             isbn_finale = pulisci_isbn(isbn_digitato) or f"BOOK-{random.randint(100000, 999999)}"
             try:
-                inserisci_libro(c, conn, isbn_finale, titolo, autore, copertina, pagine, stato, voto, mood,
-                                citazione, st.session_state.man_gen, st.session_state.man_tra)
-                for k in ["man_tit", "man_aut", "man_cov", "man_pag", "man_gen", "man_tra"]:
-                    st.session_state[k] = "" if "pag" not in k else 0
+                inserisci_libro(c, conn, isbn_finale, titolo, autore, copertina, pagine, stato, 0, mood,
+                                "", st.session_state.get("m_gen", ""), st.session_state.get("m_tra", ""))
                 st.success(f"«{titolo}» è stato aggiunto alla tua libreria!")
                 st.balloons()
             except sqlite3.IntegrityError:
-                st.error("Questo libro è già registrato nella tua libreria!")
+                st.error("Questo libro è già registrato nel database!")
 
 # =============================================================
 # 5. L'ORACOLO
 # =============================================================
 elif scelta == "🔮 L'Oracolo":
-    st.markdown('<div class="hero"><h1>🔮 L\'Oracolo dei Libri</h1>'
-                '<p>Non sai cosa leggere stasera? Lascia che sia il destino a scegliere per te.</p></div>',
-                unsafe_allow_html=True)
-
-    scelta_mood = st.selectbox("Che umore hai stasera?", ["Sorprendimi (qualsiasi)"] + MOODS)
-    if scelta_mood.startswith("Sorprendimi"):
-        pila = c.execute("SELECT * FROM miei_libri WHERE stato = 'Da Iniziare ⏳'").fetchall()
-    else:
-        pila = c.execute("SELECT * FROM miei_libri WHERE stato = 'Da Iniziare ⏳' AND mood = ?", (scelta_mood,)).fetchall()
-
+    st.markdown('<div class="hero"><h1>🔮 L\'Oracolo dei Libri</h1><p>Lascia che il destino scelga la tua prossima lettura.</p></div>', unsafe_allow_html=True)
+    pila = c.execute("SELECT * FROM miei_libri WHERE stato = 'Da Iniziare ⏳'").fetchall()
     if not pila:
-        st.warning("Nessun libro 'Da Iniziare' trovato per questo umore. Aggiungi qualche nuovo volume o cambia vibes!")
+        st.warning("Nessun libro nella pila 'Da Iniziare'.")
     else:
-        st.write(f"Ci sono **{len(pila)}** libri in attesa adatti alla tua serata.")
-        responsi = [
-            "Le stelle hanno deciso: spegni il telefono e apriti a questo mondo.",
-            "Questo libro ti terrà sveglio fino alle prime ore del mattino.",
-            "Prepara una tazza calda, è il momento perfetto per questa storia.",
-            "La pila ringrazia: ecco il prescelto del destino!"
-        ]
-        if st.button("✨ Interroga l'Oracolo ✨", type="primary", use_container_width=True):
-            slot = st.empty()
-            titoli = [b["titolo"] for b in pila]
-            for _ in range(8):
-                slot.markdown(f"### 🎰 *{random.choice(titoli)}*")
-                time.sleep(0.15)
+        st.write(f"Ci sono **{len(pila)}** libri in attesa.")
+        if st.button("✨ Interroga l'Oracolo ✨", type="primary"):
             scelto = random.choice(pila)
-            slot.empty()
             st.snow()
-            st.divider()
-
-            c_ocov, c_otxt = st.columns([1, 2])
-            with c_ocov:
-                if scelto["copertina_url"]:
-                    mostra_cover(scelto["copertina_url"], width=220)
-            with c_otxt:
-                st.subheader(f"📖 {scelto['titolo']}")
-                st.caption(f"di **{scelto['autore']}**")
-                st.info(f"🔮 *{random.choice(responsi)}*")
-                if scelto["mood"]:
-                    st.write(f"🏷️ Vibes: `{scelto['mood']}`")
-                if scelto["pagine"]:
-                    st.caption(f"Lunghezza: {scelto['pagine']} pagine (~{max(1, round(scelto['pagine'] / 45))} ore di lettura)")
-                if scelto["trama"]:
-                    st.caption(scelto["trama"])
-                if st.button("📖 Inizialo subito!", key="start_ora"):
-                    c.execute("UPDATE miei_libri SET stato = 'In Lettura 📖' WHERE isbn = ?", (scelto["isbn"],))
-                    conn.commit()
-                    st.success("Il libro è stato spostato 'In Lettura'. Lo trovi nel tuo Rifugio!")
+            st.subheader(f"📖 {scelto['titolo']}")
+            st.caption(f"di {scelto['autore']} · {scelto['pagine'] or '?'} pag.")
+            if scelto["copertina_url"]:
+                mostra_cover(scelto["copertina_url"], width=200)
+            if st.button("Lo inizio ora!", key="start_ora"):
+                c.execute("UPDATE miei_libri SET stato = 'In Lettura 📖' WHERE isbn = ?", (scelto["isbn"],))
+                conn.commit()
+                st.success("Spostato 'In Lettura'!")
 
 # =============================================================
 # 6. STATISTICHE
 # =============================================================
 elif scelta == "📊 Statistiche":
-    st.markdown('<div class="hero"><h1>📊 La Tua Lettura in Cifre</h1>'
-                '<p>Panoramica completa delle tue abitudini di lettura</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>📊 Statistiche di Lettura</h1></div>', unsafe_allow_html=True)
     df = pd.read_sql_query("SELECT * FROM miei_libri", conn)
     if df.empty:
-        st.info("Nessun dato disponibile. Inizia catalogando qualche libro!")
+        st.info("Nessun libro presente.")
     else:
         letti = df[df["stato"] == "Letti ✨"]
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Pagine Lette Totali", int(letti["pagine"].fillna(0).sum()))
-        voto_medio = letti[letti["voto"] > 0]["voto"].mean()
-        k2.metric("Media Voto", f"{voto_medio:.1f} ⭐" if not pd.isna(voto_medio) else "—")
-        k3.metric("Volume Più Lungo", f"{int(letti['pagine'].max())} pag." if not letti.empty and letti['pagine'].max() > 0 else "—")
-        k4.metric("Autori Differenti", df["autore"].replace("", None).nunique())
-
-        c_g1, c_g2 = st.columns(2)
-        with c_g1:
-            st.subheader("Ripartizione per Stato")
-            st.bar_chart(df["stato"].value_counts())
-        with c_g2:
-            st.subheader("Vibes & Mood")
-            mc = df[df["mood"] != ""]["mood"].value_counts()
-            if not mc.empty:
-                st.bar_chart(mc)
-            else:
-                st.caption("Nessun mood assegnato finora.")
-
-        st.subheader("Libri Conclusi per Mese")
-        fin = letti.dropna(subset=["data_fine"]).copy()
-        if not fin.empty:
-            fin["mese"] = fin["data_fine"].str[:7]
-            st.bar_chart(fin.groupby("mese").size())
-        else:
-            st.caption("Termina qualche volume per visualizzare l'andamento nel tempo.")
+        st.metric("Pagine Lette Totali", int(letti["pagine"].fillna(0).sum()))
+        st.metric("Libri Finiti", len(letti))
+        st.bar_chart(df["stato"].value_counts())
 
 # =============================================================
 # 7. SFIDE & TROFEI
 # =============================================================
 elif scelta == "🏆 Sfide & Trofei":
-    st.markdown('<div class="hero"><h1>🏆 Sfide & Trofei</h1>'
-                '<p>Raggiungi i tuoi traguardi e sblocca riconoscimenti</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>🏆 Sfide & Trofei</h1></div>', unsafe_allow_html=True)
     s = statistiche(c)
-
-    st.subheader(f"🎯 Sfida di Lettura {datetime.now().year}")
-    obj_anno = st.slider("Quanti libri vuoi leggere quest'anno?", 1, 100, get_setting(c, "obiettivo_anno", 12))
+    st.subheader(f"🎯 Obiettivo {datetime.now().year}")
+    obj_anno = st.slider("Libri da leggere quest'anno:", 1, 100, get_setting(c, "obiettivo_anno", 12))
     set_setting(c, conn, "obiettivo_anno", obj_anno)
-    anno_cur = str(datetime.now().year)
-    letti_anno = c.execute("SELECT COUNT(*) FROM miei_libri WHERE stato = 'Letti ✨' AND (data_fine LIKE ? OR data_fine IS NULL)",
-                           (f"{anno_cur}%",)).fetchone()[0]
-    p_anno = min(letti_anno / obj_anno, 1.0)
-    st.progress(p_anno, text=f"{letti_anno} su {obj_anno} libri completati ({int(p_anno * 100)}%)")
-    if p_anno >= 1.0:
-        st.success("🎉 Complimenti! Hai raggiunto il tuo obiettivo annuale!")
-
-    st.subheader("📅 Sfida Pagine del Mese")
-    mese_cur = datetime.now().strftime("%Y-%m")
-    pag_mese = c.execute("SELECT COALESCE(SUM(pagine),0) FROM miei_libri WHERE stato = 'Letti ✨' AND data_fine LIKE ?",
-                         (f"{mese_cur}%",)).fetchone()[0]
-    obj_mese = st.slider("Pagine da leggere questo mese:", 100, 3000, get_setting(c, "obiettivo_mese", 600), step=50)
-    set_setting(c, conn, "obiettivo_mese", obj_mese)
-    st.progress(min(pag_mese / obj_mese, 1.0), text=f"{pag_mese} su {obj_mese} pagine")
+    st.progress(min(s["letti"] / obj_anno, 1.0), text=f"{s['letti']} su {obj_anno} libri")
 
     st.divider()
-    st.subheader("🎖️ Bacheca dei Trofei")
-    sbloccati = sum(1 for _, _, _, cond in TROFEI if cond(s))
-    st.caption(f"Sbloccati **{sbloccati}** su **{len(TROFEI)}** trofei")
-    cols = st.columns(5)
+    st.subheader("🎖️ Trofei")
+    cols = st.columns(2)
     for idx, (emoji, nome, desc, cond) in enumerate(TROFEI):
-        with cols[idx % 5]:
+        with cols[idx % 2]:
             if cond(s):
-                st.markdown(f'<div class="badge-on"><div style="font-size:2.2rem">{emoji}</div>'
-                            f'<b>{nome}</b><br><small>{desc}</small></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="badge-on">{emoji} <b>{nome}</b><br><small>{desc}</small></div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="badge-off"><div style="font-size:2.2rem">🔒</div>'
-                            f'<b>{nome}</b><br><small>{desc}</small></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="badge-off">🔒 <b>{nome}</b><br><small>{desc}</small></div>', unsafe_allow_html=True)
 
 conn.close()
