@@ -94,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookApp/5.0"}
+HEADERS = {"User-Agent": "BookNookApp/6.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -245,8 +245,8 @@ st.markdown("""
             border:1px solid rgba(255,207,92,.65);border-radius:16px;padding:12px;text-align:center;margin-bottom:8px}
   .badge-off{background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.2);
              border-radius:16px;padding:12px;text-align:center;opacity:.55;margin-bottom:8px}
-  
-  /* Nasconde il tasto manuale 'Take Photo': lo scanner lavora da solo */
+
+  /* Nasconde il tasto manuale 'Take Photo': lo scanner lavora in automatico */
   div[data-testid="stCameraInput"] button {
     display: none !important;
   }
@@ -504,11 +504,11 @@ elif scelta == "🛋️ La Mia Libreria":
                             st.rerun()
 
 # =============================================================
-# 3. SCANSIONE VELOCE (AUTORIZZATA & AUTOMATICA CONTINUA)
+# 3. SCANSIONE VELOCE (FOTOCAMERA POSTERIORE AUTOMATICA)
 # =============================================================
 elif scelta == "⚡ Scansione Veloce":
-    st.markdown('<div class="hero"><h1>⚡ Scansione Automatica Continua</h1>'
-                '<p>Inquadra il codice a barre: non devi scattare, la fotocamera rileva e registra da sola.</p></div>',
+    st.markdown('<div class="hero"><h1>⚡ Scansione Automatica Posteriore</h1>'
+                '<p>Inquadra il codice a barre sul retro: la fotocamera posteriore lo legge e registra all\'istante.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
@@ -518,7 +518,7 @@ elif scelta == "⚡ Scansione Veloce":
     c_conf1, c_conf2 = st.columns([1, 1])
     stato_raffica = c_conf1.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Lettura codice inviato in automatico
+    # Verifica se un codice è arrivato in automatico dalla scansione
     isbn_catturato = None
     try:
         if "isbn_auto" in st.query_params:
@@ -527,28 +527,30 @@ elif scelta == "⚡ Scansione Veloce":
     except Exception:
         pass
 
-    st.success("🟢 **Fotocamera e Scanner Laser Attivi**: tieni il codice a barre dentro l'inquadratura.")
+    st.success("🟢 **Fotocamera Posteriore Attiva**: inquadra il codice a barre sul retro del libro dentro il riquadro giallo.")
 
-    # 1. Fotocamera NATIVA autorizzata da Streamlit
-    cam_dummy = st.camera_input("Scansione in tempo reale", key="cam_live_feed")
+    # 1. Video Element nativo di Streamlit
+    cam_dummy = st.camera_input("Scansione Posteriore Continua", key="cam_live_feed")
 
-    # 2. Sensore Ottico JavaScript collegato direttamente alla fotocamera Streamlit
-    JS_SCANNER_HOOK = """
+    # 2. Script che forza la fotocamera posteriore, aggiunge controlli e scansiona
+    JS_SCANNER_POSTERIORE = """
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
     <script>
     (function(){
       var lastFound = "";
       var lastTime = 0;
+      var curTrack = null;
+      var facing = "environment"; // Inizia sempre con la fotocamera posteriore
 
       function beep() {
         try {
           var ctx = new (window.AudioContext || window.webkitAudioContext)();
           var o = ctx.createOscillator();
           o.type = "sine";
-          o.frequency.value = 920;
+          o.frequency.value = 950;
           o.connect(ctx.destination);
           o.start();
-          setTimeout(function(){ o.stop(); ctx.close(); }, 130);
+          setTimeout(function(){ o.stop(); ctx.close(); }, 140);
         } catch(e){}
       }
 
@@ -562,7 +564,7 @@ elif scelta == "⚡ Scansione Veloce":
         lastTime = now;
 
         beep();
-        if (navigator.vibrate) navigator.vibrate(120);
+        if (navigator.vibrate) navigator.vibrate(130);
 
         try {
           var parentUrl = new URL(window.parent.location.href);
@@ -573,16 +575,50 @@ elif scelta == "⚡ Scansione Veloce":
         }
       }
 
+      async function switchCamera(video, targetFacing) {
+        try {
+          if (video.srcObject) {
+            video.srcObject.getTracks().forEach(function(t){ t.stop(); });
+          }
+          var nav = window.parent.navigator || navigator;
+          var stream = await nav.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: targetFacing },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+          video.srcObject = stream;
+          await video.play();
+          curTrack = stream.getVideoTracks()[0];
+          facing = targetFacing;
+
+          // Attiva l'autofocus continuo se supportato dalla fotocamera posteriore
+          if (curTrack && curTrack.getCapabilities) {
+            var caps = curTrack.getCapabilities();
+            if (caps.focusMode && caps.focusMode.indexOf("continuous") > -1) {
+              curTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function(){});
+            }
+          }
+        } catch(err) {
+          console.log("Errore cambio fotocamera:", err);
+        }
+      }
+
       function attachScanner() {
         var doc = window.parent.document;
         var video = doc.querySelector("div[data-testid='stCameraInput'] video") || doc.querySelector("video");
         
         if (!video) {
-          setTimeout(attachScanner, 400);
+          setTimeout(attachScanner, 350);
           return;
         }
 
-        // Aggiungi il mirino laser grafico direttamente sul video
+        // Forza immediatamente la fotocamera posteriore
+        switchCamera(video, "environment");
+
+        // Aggiungi interfaccia grafica: mirino laser e pulsanti cambio fotocamera / torcia
         var container = video.parentElement;
         if (container && !doc.getElementById("laser-box-overlay")) {
           container.style.position = "relative";
@@ -590,17 +626,40 @@ elif scelta == "⚡ Scansione Veloce":
           overlay.id = "laser-box-overlay";
           overlay.style.cssText = "position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:99;";
           overlay.innerHTML = `
-            <div style="position:absolute;left:10%;right:10%;top:22%;bottom:22%;border:3px solid #ffcf5c;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,0.38);">
+            <div style="position:absolute;left:8%;right:8%;top:20%;bottom:20%;border:3px solid #ffcf5c;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,0.38);">
               <div style="position:absolute;left:5%;right:5%;height:3px;background:#ff4d6d;top:50%;box-shadow:0 0 10px #ff4d6d;animation:sweep 1.6s infinite alternate ease-in-out;"></div>
             </div>
+            <div style="position:absolute;bottom:12px;left:0;right:0;display:flex;justify-content:center;gap:10px;pointer-events:auto;">
+              <button id="btn-flip" style="background:#261d3a;color:#fff;border:1px solid #7b2ff7;padding:8px 14px;border-radius:10px;font-weight:bold;cursor:pointer;">🔄 Cambia Camera</button>
+              <button id="btn-torch" style="background:#261d3a;color:#fff;border:1px solid #ffcf5c;padding:8px 14px;border-radius:10px;font-weight:bold;cursor:pointer;">🔦 Torcia</button>
+            </div>
             <style>
-              @keyframes sweep { from { top: 25%; } to { top: 75%; } }
+              @keyframes sweep { from { top: 24%; } to { top: 76%; } }
             </style>
           `;
           container.appendChild(overlay);
+
+          // Click pulsante cambio fotocamera
+          doc.getElementById("btn-flip").addEventListener("click", function(e){
+            e.stopPropagation();
+            var nextFacing = (facing === "environment") ? "user" : "environment";
+            switchCamera(video, nextFacing);
+          });
+
+          // Click pulsante torcia
+          var torchState = false;
+          doc.getElementById("btn-torch").addEventListener("click", function(e){
+            e.stopPropagation();
+            if (curTrack && curTrack.applyConstraints) {
+              torchState = !torchState;
+              curTrack.applyConstraints({ advanced: [{ torch: torchState }] }).catch(function(){
+                alert("Torcia non supportata su questo dispositivo.");
+              });
+            }
+          });
         }
 
-        // Modalità 1: API Hardware BarcodeDetector
+        // Riconoscimento codici hardware nativo (ad altissima velocità)
         if ("BarcodeDetector" in window) {
           try {
             var detector = new BarcodeDetector({ formats: ["ean_13"] });
@@ -610,14 +669,14 @@ elif scelta == "⚡ Scansione Veloce":
                   if (barcodes.length > 0) onDetected(barcodes[0].rawValue);
                 }).catch(function(){});
               }
-              setTimeout(loopDetector, 80);
+              setTimeout(loopDetector, 75);
             }
             loopDetector();
             return;
           } catch(e){}
         }
 
-        // Modalità 2: Fallback libreria ZXing continua
+        // Fallback su libreria ottica continua
         if (window.ZXing) {
           var hints = new Map();
           hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
@@ -628,14 +687,14 @@ elif scelta == "⚡ Scansione Veloce":
         }
       }
 
-      setTimeout(attachScanner, 600);
+      setTimeout(attachScanner, 500);
     })();
     </script>
     """
-    components.html(JS_SCANNER_HOOK, height=0)
+    components.html(JS_SCANNER_POSTERIORE, height=0)
 
-    # Inserimento opzionale con pistola USB o manuale
-    with st.expander("⌨️ Oppure usa un lettore barcode USB o digita l'ISBN:"):
+    # Inserimento opzionale manuale o con pistola USB
+    with st.expander("⌨️ Oppure digita l'ISBN o usa una pistola barcode USB:"):
         with st.form("form_pistola", clear_on_submit=True):
             input_pistola = st.text_input("Codice ISBN (premi Invio per salvare):", placeholder="Es. 9788804668237")
             if st.form_submit_button("Aggiungi Subito") and input_pistola.strip():
