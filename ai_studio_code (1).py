@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 from datetime import datetime, date
 
 # =============================================================
-# CONFIGURAZIONE PAGINA (Mobile-friendly)
+# CONFIGURAZIONE PAGINA
 # =============================================================
 st.set_page_config(
     page_title="BookNook - La Mia Tana dei Libri",
@@ -94,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookMobile/1.0"}
+HEADERS = {"User-Agent": "BookNookMobile/2.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -300,10 +300,10 @@ xp_tot = calcola_xp(c)
 lv_nome, lv_frac, lv_mancano, lv_prox = livello(xp_tot)
 
 st.sidebar.title("☕ BookNook")
-st.sidebar.caption("Il tuo rifugio letterario tascabile")
+st.sidebar.caption("Tana dei Libri")
 st.sidebar.markdown(f"**{lv_nome}**")
 st.sidebar.progress(lv_frac)
-st.sidebar.caption(f"⭐ **{xp_tot} XP**" + (f" · Mancano {lv_mancano} XP per {lv_prox}" if lv_prox else " · Livello Massimo!"))
+st.sidebar.caption(f"⭐ **{xp_tot} XP**" + (f" · Mancano {lv_mancano} XP per {lv_prox}" if lv_prox else " · Livello Max!"))
 
 scelta = st.sidebar.radio("Menu:", [
     "⚡ Scansione Veloce",
@@ -316,11 +316,11 @@ scelta = st.sidebar.radio("Menu:", [
 ])
 
 # =============================================================
-# 1. SCANSIONE VELOCE (100% Client-Side su Smartphone)
+# 1. SCANSIONE VELOCE (OTTIMIZZATA PER CODICI EAN-13)
 # =============================================================
 if scelta == "⚡ Scansione Veloce":
     st.markdown('<div class="hero"><h1>⚡ Scansione Posteriore</h1>'
-                '<p>Tocca il pulsante per attivare l\'obiettivo posteriore. Scansiona e salva da sola senza cliccare.</p></div>',
+                '<p>Tieni il codice a barre dentro il riquadro giallo (a 15-20 cm). Salva da sola senza toccare nulla.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
@@ -329,7 +329,7 @@ if scelta == "⚡ Scansione Veloce":
 
     stato_raffica = st.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Controllo se è arrivato un ISBN dal lettore JavaScript
+    # Cattura ISBN reindirizzato
     isbn_catturato = None
     try:
         if "isbn_auto" in st.query_params:
@@ -338,74 +338,53 @@ if scelta == "⚡ Scansione Veloce":
     except Exception:
         pass
 
-    # Componente HTML / JS isolato con accesso hardware alla fotocamera posteriore
-    HTML_SCANNER_SMARTPHONE = """
+    # SCANNER HTML5 SPECIFICO PER CODICI A BARRE (con Viewfinder e Html5Qrcode)
+    HTML_SCANNER_EAN13 = """
     <!DOCTYPE html>
     <html>
     <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <!-- Libreria specializzata in codici a barre per mobile -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
       body { margin: 0; background: transparent; font-family: -apple-system, system-ui, sans-serif; color: #fff; }
-      #card { background: #0c081c; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); }
-      #view-container { position: relative; width: 100%; height: 350px; background: #000; display: flex; align-items: center; justify-content: center; }
-      video { width: 100%; height: 100%; object-fit: cover; display: none; }
-      #start-screen { text-align: center; padding: 25px 15px; }
-      .big-icon { font-size: 3.5rem; margin-bottom: 10px; }
-      .btn-main { background: linear-gradient(135deg,#7b2ff7,#f107a3); color: #fff; border: none; padding: 14px 28px; border-radius: 14px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(123,47,247,0.4); }
-      #scan-frame { display: none; position: absolute; left: 8%; right: 8%; top: 22%; bottom: 22%; border: 3px solid #ffcf5c; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.42); pointer-events: none; }
-      #laser-line { position: absolute; left: 5%; right: 5%; height: 3px; background: #ff4d6d; top: 50%; box-shadow: 0 0 10px #ff4d6d; animation: sweep 1.6s infinite alternate ease-in-out; }
-      @keyframes sweep { from { top: 25%; } to { top: 75%; } }
-      #controls-bar { display: none; position: absolute; bottom: 12px; left: 0; right: 0; justify-content: center; gap: 10px; z-index: 10; }
-      .btn-sub { background: #231b36; color: #fff; border: 1px solid #7b2ff7; padding: 8px 14px; border-radius: 10px; font-weight: bold; font-size: 13px; }
-      #status-msg { padding: 12px; background: #1c152d; font-size: 13px; text-align: center; border-left: 4px solid #7b2ff7; }
+      #reader-box { background: #0c081c; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.12); }
+      #reader { width: 100%; min-height: 350px; background: #000; }
+      #start-panel { text-align: center; padding: 30px 15px; }
+      .btn-go { background: linear-gradient(135deg,#7b2ff7,#f107a3); color: #fff; border: none; padding: 15px 30px; border-radius: 14px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(123,47,247,0.4); }
+      #status-info { padding: 12px; background: #1c152d; font-size: 13px; text-align: center; border-left: 4px solid #7b2ff7; }
+      /* Stile del viewfinder mirino */
+      #reader__scan_region { border: 3px solid #ffcf5c !important; border-radius: 12px !important; }
+      #reader__dashboard_section_csr button { background: #2b2342; color: #fff; border: 1px solid #7b2ff7; padding: 6px 12px; border-radius: 8px; }
     </style>
     </head>
     <body>
-    <div id="card">
-      <div id="view-container">
-        <video id="v" playsinline autoplay muted></video>
-        
-        <div id="start-screen">
-          <div class="big-icon">📷</div>
-          <h3 style="margin:0 0 8px;">Fotocamera Posteriore</h3>
-          <p style="margin:0 0 18px;color:#aaa;font-size:13px;">Nessuna app o pip da installare.<br>Tocca qui sotto per inquadrare i codici.</p>
-          <button id="btn-start" class="btn-main">▶️ Avvia Fotocamera Posteriore</button>
-        </div>
-
-        <div id="scan-frame"><div id="laser-line"></div></div>
-
-        <div id="controls-bar">
-          <button id="btn-torch" class="btn-sub">🔦 Torcia</button>
-          <button id="btn-stop" class="btn-sub" style="border-color:#ff4d6d;color:#ff4d6d;">⏹ Ferma</button>
-        </div>
+    <div id="reader-box">
+      <div id="start-panel">
+        <div style="font-size:3.5rem;margin-bottom:10px;">📷</div>
+        <h3 style="margin:0 0 8px;">Scanner Posteriore EAN-13</h3>
+        <p style="margin:0 0 18px;color:#bbb;font-size:13px;">Inquadra il codice a barre sul retro del libro a 15-20 cm di distanza.</p>
+        <button id="btn-activate" class="btn-go">▶️ Avvia Fotocamera Posteriore</button>
       </div>
-      <div id="status-msg">In attesa di avvio fotocamera...</div>
-    </div>
 
-    <!-- ZXing CDN come fallback universale -->
-    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+      <div id="reader" style="display:none;"></div>
+      <div id="status-info">In attesa di avvio scanner...</div>
+    </div>
 
     <script>
     (function(){
-      var v = document.getElementById("v");
-      var startScreen = document.getElementById("start-screen");
-      var scanFrame = document.getElementById("scan-frame");
-      var controlsBar = document.getElementById("controls-bar");
-      var statusMsg = document.getElementById("status-msg");
-      var btnStart = document.getElementById("btn-start");
-      var btnTorch = document.getElementById("btn-torch");
-      var btnStop = document.getElementById("btn-stop");
-
-      var stream = null;
-      var track = null;
-      var running = false;
+      var startPanel = document.getElementById("start-panel");
+      var readerDiv = document.getElementById("reader");
+      var statusInfo = document.getElementById("status-info");
+      var btnActivate = document.getElementById("btn-activate");
+      var html5QrCode = null;
       var lastCode = "";
       var lastTime = 0;
 
-      function setStatus(t, isErr) {
-        statusMsg.textContent = t;
-        statusMsg.style.borderLeftColor = isErr ? "#ff4d6d" : "#7b2ff7";
+      function setStatus(t, err) {
+        statusInfo.textContent = t;
+        statusInfo.style.borderLeftColor = err ? "#ff4d6d" : "#7b2ff7";
       }
 
       function beep() {
@@ -420,146 +399,99 @@ if scelta == "⚡ Scansione Veloce":
         } catch(e){}
       }
 
-      function onDetected(raw) {
-        var d = String(raw).replace(/[^0-9Xx]/g, "").toUpperCase();
-        if (!((d.length === 13 && /^97[89]/.test(d)) || d.length === 10)) return;
+      function onBarcodeFound(decodedText) {
+        var clean = String(decodedText).replace(/[^0-9Xx]/g, "").toUpperCase();
+        if (!((clean.length === 13 && /^97[89]/.test(clean)) || clean.length === 10)) return;
 
         var now = Date.now();
-        if (d === lastCode && (now - lastTime) < 4500) return;
-        lastCode = d;
+        if (clean === lastCode && (now - lastTime) < 4500) return;
+        lastCode = clean;
         lastTime = now;
 
         beep();
         if (navigator.vibrate) navigator.vibrate(140);
-        setStatus("✅ Rilevato: " + d + "! Registrazione in corso...");
+        setStatus("✅ Codice ISBN Rilevato: " + clean + " — Salvataggio in corso...", false);
+
+        if (html5QrCode) {
+          try { html5QrCode.pause(); } catch(e){}
+        }
 
         try {
           var pUrl = new URL(window.parent.location.href);
-          pUrl.searchParams.set("isbn_auto", d);
+          pUrl.searchParams.set("isbn_auto", clean);
           window.parent.location.href = pUrl.href;
         } catch(e) {
-          window.parent.location.search = "?isbn_auto=" + d;
+          window.parent.location.search = "?isbn_auto=" + clean;
         }
       }
 
-      async function openRearCamera() {
-        setStatus("Connessione all'obiettivo posteriore...", false);
-        var nav = (window.parent && window.parent.navigator && window.parent.navigator.mediaDevices) ? window.parent.navigator : navigator;
+      async function startScanner() {
+        startPanel.style.display = "none";
+        readerDiv.style.display = "block";
+        setStatus("Avvio fotocamera posteriore con mirino laser...", false);
 
-        if (!nav.mediaDevices || !nav.mediaDevices.getUserMedia) {
-          setStatus("⚠️ Errore: fotocamera non accessibile (richiede HTTPS o permessi concessi).", true);
-          return;
-        }
+        html5QrCode = new Html5Qrcode("reader");
+
+        // Configuriamo il mirino specifico per codici a barre orizzontali (280x140px)
+        var config = {
+          fps: 20,
+          qrbox: { width: 280, height: 140 },
+          aspectRatio: 1.0,
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.CODE_128
+          ]
+        };
 
         try {
-          // 1. Tenta la ricerca dell'ID fotocamera posteriore tra i dispositivi hardware
-          var devices = await nav.mediaDevices.enumerateDevices();
-          var videoDevs = devices.filter(function(d){ return d.kind === "videoinput"; });
-          var targetId = null;
+          // Ricerca specifica della fotocamera posteriore tra i dispositivi
+          var devices = await Html5Qrcode.getCameras();
+          var targetCameraId = null;
 
-          for (var i = 0; i < videoDevs.length; i++) {
-            var lbl = (videoDevs[i].label || "").toLowerCase();
-            if (lbl.includes("back") || lbl.includes("rear") || lbl.includes("posteriore") || lbl.includes("environment") || lbl.includes("0")) {
-              targetId = videoDevs[i].deviceId;
-              break;
+          if (devices && devices.length > 0) {
+            for (var i = 0; i < devices.length; i++) {
+              var lbl = (devices[i].label || "").toLowerCase();
+              if (lbl.includes("back") || lbl.includes("rear") || lbl.includes("posteriore") || lbl.includes("environment") || lbl.includes("0")) {
+                targetCameraId = devices[i].id;
+                break;
+              }
             }
-          }
-          if (!targetId && videoDevs.length > 1) {
-            targetId = videoDevs[videoDevs.length - 1].deviceId; // Ultimo dispositivo = quasi sempre il retro
-          }
-
-          var constraints = {
-            audio: false,
-            video: targetId 
-              ? { deviceId: { exact: targetId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-              : { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          };
-
-          stream = await nav.mediaDevices.getUserMedia(constraints);
-          v.srcObject = stream;
-          await v.play();
-          track = stream.getVideoTracks()[0];
-          running = true;
-
-          startScreen.style.display = "none";
-          v.style.display = "block";
-          scanFrame.style.display = "block";
-          controlsBar.style.display = "flex";
-          setStatus("🟢 Fotocamera posteriore attiva! Inquadra il codice a barre.", false);
-
-          // Autofocus continuo su dispositivi supportati
-          if (track && track.getCapabilities) {
-            var caps = track.getCapabilities();
-            if (caps.focusMode && caps.focusMode.includes("continuous")) {
-              track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function(){});
+            if (!targetCameraId && devices.length > 1) {
+              targetCameraId = devices[devices.length - 1].id;
             }
           }
 
-          // RICONOSCIMENTO VELOCE 1: API Hardware BarcodeDetector
-          if ("BarcodeDetector" in window) {
-            try {
-              var det = new BarcodeDetector({ formats: ["ean_13"] });
-              (function loop(){
-                if (!running) return;
-                if (v.readyState >= 2) {
-                  det.detect(v).then(function(codes){
-                    if (codes.length > 0) onDetected(codes[0].rawValue);
-                  }).catch(function(){});
-                }
-                setTimeout(loop, 75);
-              })();
-              return;
-            } catch(e){}
-          }
+          var cameraSetting = targetCameraId ? targetCameraId : { facingMode: "environment" };
 
-          // RICONOSCIMENTO VELOCE 2: Fallback libreria ZXing
-          if (window.ZXing) {
-            var hints = new Map();
-            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
-            var reader = new ZXing.BrowserMultiFormatReader(hints);
-            reader.decodeFromVideoElement(v, function(res){
-              if (res && running) onDetected(res.getText());
-            });
-          }
+          await html5QrCode.start(
+            cameraSetting,
+            config,
+            onBarcodeFound,
+            function(err) { /* Scansione fotogramma in corso */ }
+          );
+
+          setStatus("🟢 Inquadra il codice a barre dentro il riquadro giallo (distanza 15-20 cm).", false);
 
         } catch(err) {
-          setStatus("Impossibile avviare fotocamera posteriore: " + err.name, true);
+          setStatus("Errore avvio fotocamera: " + err + ". Verifica i permessi o la connessione HTTPS.", true);
         }
       }
 
-      function stopCamera() {
-        running = false;
-        if (stream) {
-          stream.getTracks().forEach(function(t){ t.stop(); });
-          stream = null;
-        }
-        v.srcObject = null;
-        v.style.display = "none";
-        scanFrame.style.display = "none";
-        controlsBar.style.display = "none";
-        startScreen.style.display = "block";
-        setStatus("Fotocamera ferma. Tocca per riavviare.", false);
-      }
-
-      btnStart.addEventListener("click", openRearCamera);
-      btnStop.addEventListener("click", stopCamera);
-
-      var torchState = false;
-      btnTorch.addEventListener("click", function(){
-        if (track && track.applyConstraints) {
-          torchState = !torchState;
-          track.applyConstraints({ advanced: [{ torch: torchState }] }).catch(function(){
-            alert("Luce flash non supportata da questo sensore.");
-          });
-        }
-      });
+      btnActivate.addEventListener("click", startScanner);
     })();
     </script>
     </body>
     </html>
     """
 
-    components.html(HTML_SCANNER_SMARTPHONE, height=430)
+    components.html(HTML_SCANNER_EAN13, height=440)
+
+    st.caption("💡 **Consiglio di lettura su smartphone**:")
+    st.caption("- Tieni il libro a circa **15-20 cm** dall'obiettivo (se sei troppo vicino, la fotocamera non riesce a mettere a fuoco).")
+    st.caption("- Posiziona le barre nere orizzontali e ben illuminate dentro il rettangolo.")
 
     # Inserimento manuale rapido / barcode gun
     with st.expander("⌨️ Oppure digita l'ISBN a mano:"):
