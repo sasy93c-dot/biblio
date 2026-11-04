@@ -18,6 +18,11 @@
   button.sec{background:#2b2342;color:#f3eefc}
   #msg{margin-top:10px;padding:10px 12px;border-radius:12px;background:#2b2342;font-size:15px}
 </style>
+<script>
+  // Dice subito a Streamlit che il componente e' pronto e gli da un'altezza minima.
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:componentReady", apiVersion:1}, "*");
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:setFrameHeight", height:230}, "*");
+</script>
 </head>
 <body>
 <div id="wrap">
@@ -31,12 +36,10 @@
 </div>
 <div id="msg">Premi «Avvia scanner» e inquadra il codice a barre sul retro del libro.</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <script>
 (function(){
   function send(type, data){ window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data||{}), "*"); }
-  function fit(){ send("streamlit:setFrameHeight", {height: document.body.scrollHeight + 10}); }
-  send("streamlit:componentReady", {apiVersion:1});
+  function fit(){ send("streamlit:setFrameHeight", {height: Math.max(document.body.scrollHeight + 10, 230)}); }
   fit();
 
   var v=document.getElementById("v"), msg=document.getElementById("msg");
@@ -58,6 +61,19 @@
     beep(); if(navigator.vibrate) navigator.vibrate(90);
     setMsg("✅ Letto: "+d+" — pronto per il prossimo!");
     send("streamlit:setComponentValue", {value:{isbn:d, t:now}, dataType:"json"});
+  }
+
+
+  function loadZX(){
+    return new Promise(function(resolve){
+      if(window.ZXing) return resolve(true);
+      var sc=document.createElement("script");
+      sc.src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+      sc.onload=function(){ resolve(true); };
+      sc.onerror=function(){ resolve(false); };
+      setTimeout(function(){ resolve(!!window.ZXing); }, 8000);
+      document.head.appendChild(sc);
+    });
   }
 
   async function start(){
@@ -84,13 +100,13 @@
         if(!running) return;
         det.detect(v).then(function(r){ if(r.length) found(r[0].rawValue); }).catch(function(){}).then(function(){ setTimeout(loop,110); });
       })();
-    }else if(window.ZXing){
+    }else if(await loadZX() && window.ZXing){
       var hints=new Map();
       hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13]);
       hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
       zx=new ZXing.BrowserMultiFormatReader(hints);
       zx.decodeFromVideoElement(v, function(res){ if(res) found(res.getText()); });
-    }else{ setMsg("Questo browser non supporta la lettura dei codici a barre."); }
+    }else{ setMsg("Non riesco a caricare il lettore di codici. Usa «Aggiungi a Mano» con una foto."); }
   }
 
   function stop(){
