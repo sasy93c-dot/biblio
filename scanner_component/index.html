@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;color:#f3eefc;background:transparent}
+  #wrap{position:relative;border-radius:16px;overflow:hidden;background:#0b0816;min-height:120px}
+  video{width:100%;display:block;max-height:55vh;object-fit:cover}
+  #frame{position:absolute;left:8%;right:8%;top:28%;bottom:28%;border:3px solid #ffcf5c;border-radius:14px;
+         box-shadow:0 0 0 999px rgba(0,0,0,.38);pointer-events:none;display:none}
+  #line{position:absolute;left:10%;right:10%;height:2px;background:#ff4d6d;top:50%;display:none;
+        animation:sweep 1.6s ease-in-out infinite alternate;pointer-events:none}
+  @keyframes sweep{from{top:34%}to{top:66%}}
+  #bar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{flex:1;padding:12px 14px;border:0;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;
+         background:linear-gradient(135deg,#7b2ff7,#f107a3);color:#fff}
+  button.sec{background:#2b2342;color:#f3eefc}
+  #msg{margin-top:10px;padding:10px 12px;border-radius:12px;background:#2b2342;font-size:15px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted></video>
+  <div id="frame"></div><div id="line"></div>
+</div>
+<div id="bar">
+  <button id="go">📷 Avvia scanner</button>
+  <button id="torch" class="sec" hidden>🔦 Luce</button>
+  <button id="stop" class="sec" hidden>⏹ Stop</button>
+</div>
+<div id="msg">Premi «Avvia scanner» e inquadra il codice a barre sul retro del libro.</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+(function(){
+  function send(type, data){ window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data||{}), "*"); }
+  function fit(){ send("streamlit:setFrameHeight", {height: document.body.scrollHeight + 10}); }
+  send("streamlit:componentReady", {apiVersion:1});
+  fit();
+
+  var v=document.getElementById("v"), msg=document.getElementById("msg");
+  var go=document.getElementById("go"), torchBtn=document.getElementById("torch"), stopBtn=document.getElementById("stop");
+  var frame=document.getElementById("frame"), line=document.getElementById("line");
+  var stream=null, track=null, running=false, last="", lastT=0, zx=null, torchOn=false;
+
+  function setMsg(t){ msg.textContent=t; fit(); }
+  function beep(){ try{ var a=new (window.AudioContext||window.webkitAudioContext)(); var o=a.createOscillator();
+    o.frequency.value=880; o.connect(a.destination); o.start(); setTimeout(function(){o.stop();a.close();},130);}catch(e){} }
+  function valid(d){ return (d.length===13 && /^97[89]/.test(d)) || d.length===10; }
+
+  function found(txt){
+    var d=String(txt).replace(/[^0-9Xx]/g,"").toUpperCase();
+    if(!valid(d)) return;
+    var now=Date.now();
+    if(d===last && now-lastT<5000) return;
+    last=d; lastT=now;
+    beep(); if(navigator.vibrate) navigator.vibrate(90);
+    setMsg("✅ Letto: "+d+" — pronto per il prossimo!");
+    send("streamlit:setComponentValue", {value:{isbn:d, t:now}, dataType:"json"});
+  }
+
+  async function start(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080}}, audio:false});
+    }catch(e){ setMsg("Fotocamera non disponibile ("+e.name+"). Controlla i permessi del browser."); return; }
+    v.srcObject=stream; await v.play();
+    track=stream.getVideoTracks()[0];
+    try{
+      var caps=track.getCapabilities ? track.getCapabilities() : {};
+      if(caps.focusMode && caps.focusMode.indexOf("continuous")>-1) await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+      if(caps.torch) torchBtn.hidden=false;
+    }catch(e){}
+    running=true; go.hidden=true; stopBtn.hidden=false; frame.style.display="block"; line.style.display="block";
+    setMsg("Inquadra il codice a barre dentro il riquadro…");
+
+    var useNative=false;
+    if("BarcodeDetector" in window){
+      try{ var fm=await BarcodeDetector.getSupportedFormats(); useNative = fm.indexOf("ean_13")>-1; }catch(e){}
+    }
+    if(useNative){
+      var det=new BarcodeDetector({formats:["ean_13"]});
+      (function loop(){
+        if(!running) return;
+        det.detect(v).then(function(r){ if(r.length) found(r[0].rawValue); }).catch(function(){}).then(function(){ setTimeout(loop,110); });
+      })();
+    }else if(window.ZXing){
+      var hints=new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+      zx=new ZXing.BrowserMultiFormatReader(hints);
+      zx.decodeFromVideoElement(v, function(res){ if(res) found(res.getText()); });
+    }else{ setMsg("Questo browser non supporta la lettura dei codici a barre."); }
+  }
+
+  function stop(){
+    running=false;
+    if(zx){ try{zx.reset();}catch(e){} zx=null; }
+    if(stream){ stream.getTracks().forEach(function(t){t.stop();}); stream=null; }
+    v.srcObject=null; go.hidden=false; stopBtn.hidden=true; torchBtn.hidden=true;
+    frame.style.display="none"; line.style.display="none"; setMsg("Scanner fermo.");
+  }
+
+  go.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+  torchBtn.addEventListener("click", async function(){
+    torchOn=!torchOn;
+    try{ await track.applyConstraints({advanced:[{torch:torchOn}]}); }catch(e){ setMsg("Luce non supportata."); }
+  });
+})();
+</script>
+</body>
+</html>
