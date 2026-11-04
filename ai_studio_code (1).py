@@ -35,8 +35,153 @@ LIVELLI = [
     (7000, "👑 Leggenda della Biblioteca"),
 ]
 
-SCANNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scanner_component")
-scanner = components.declare_component("isbn_scanner", path=SCANNER_DIR) if os.path.isdir(SCANNER_DIR) else None
+SCANNER_HTML = r"""<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;color:#f3eefc;background:transparent}
+  #wrap{position:relative;border-radius:16px;overflow:hidden;background:#0b0816;min-height:120px}
+  video{width:100%;display:block;max-height:55vh;object-fit:cover}
+  #frame{position:absolute;left:8%;right:8%;top:28%;bottom:28%;border:3px solid #ffcf5c;border-radius:14px;
+         box-shadow:0 0 0 999px rgba(0,0,0,.38);pointer-events:none;display:none}
+  #line{position:absolute;left:10%;right:10%;height:2px;background:#ff4d6d;top:50%;display:none;
+        animation:sweep 1.6s ease-in-out infinite alternate;pointer-events:none}
+  @keyframes sweep{from{top:34%}to{top:66%}}
+  #bar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{flex:1;padding:12px 14px;border:0;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;
+         background:linear-gradient(135deg,#7b2ff7,#f107a3);color:#fff}
+  button.sec{background:#2b2342;color:#f3eefc}
+  #msg{margin-top:10px;padding:10px 12px;border-radius:12px;background:#2b2342;font-size:15px}
+</style>
+<script>
+  // Dice subito a Streamlit che il componente e' pronto e gli da un'altezza minima.
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:componentReady", apiVersion:1}, "*");
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:setFrameHeight", height:230}, "*");
+</script>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted></video>
+  <div id="frame"></div><div id="line"></div>
+</div>
+<div id="bar">
+  <button id="go">📷 Avvia scanner</button>
+  <button id="torch" class="sec" hidden>🔦 Luce</button>
+  <button id="stop" class="sec" hidden>⏹ Stop</button>
+</div>
+<div id="msg">Premi «Avvia scanner» e inquadra il codice a barre sul retro del libro.</div>
+
+<script>
+(function(){
+  function send(type, data){ window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data||{}), "*"); }
+  function fit(){ send("streamlit:setFrameHeight", {height: Math.max(document.body.scrollHeight + 10, 230)}); }
+  fit();
+
+  var v=document.getElementById("v"), msg=document.getElementById("msg");
+  var go=document.getElementById("go"), torchBtn=document.getElementById("torch"), stopBtn=document.getElementById("stop");
+  var frame=document.getElementById("frame"), line=document.getElementById("line");
+  var stream=null, track=null, running=false, last="", lastT=0, zx=null, torchOn=false;
+
+  function setMsg(t){ msg.textContent=t; fit(); }
+  function beep(){ try{ var a=new (window.AudioContext||window.webkitAudioContext)(); var o=a.createOscillator();
+    o.frequency.value=880; o.connect(a.destination); o.start(); setTimeout(function(){o.stop();a.close();},130);}catch(e){} }
+  function valid(d){ return (d.length===13 && /^97[89]/.test(d)) || d.length===10; }
+
+  function found(txt){
+    var d=String(txt).replace(/[^0-9Xx]/g,"").toUpperCase();
+    if(!valid(d)) return;
+    var now=Date.now();
+    if(d===last && now-lastT<5000) return;
+    last=d; lastT=now;
+    beep(); if(navigator.vibrate) navigator.vibrate(90);
+    setMsg("✅ Letto: "+d+" — pronto per il prossimo!");
+    send("streamlit:setComponentValue", {value:{isbn:d, t:now}, dataType:"json"});
+  }
+
+
+  function loadZX(){
+    return new Promise(function(resolve){
+      if(window.ZXing) return resolve(true);
+      var sc=document.createElement("script");
+      sc.src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+      sc.onload=function(){ resolve(true); };
+      sc.onerror=function(){ resolve(false); };
+      setTimeout(function(){ resolve(!!window.ZXing); }, 8000);
+      document.head.appendChild(sc);
+    });
+  }
+
+  async function start(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080}}, audio:false});
+    }catch(e){ setMsg("Fotocamera non disponibile ("+e.name+"). Controlla i permessi del browser."); return; }
+    v.srcObject=stream; await v.play();
+    track=stream.getVideoTracks()[0];
+    try{
+      var caps=track.getCapabilities ? track.getCapabilities() : {};
+      if(caps.focusMode && caps.focusMode.indexOf("continuous")>-1) await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+      if(caps.torch) torchBtn.hidden=false;
+    }catch(e){}
+    running=true; go.hidden=true; stopBtn.hidden=false; frame.style.display="block"; line.style.display="block";
+    setMsg("Inquadra il codice a barre dentro il riquadro…");
+
+    var useNative=false;
+    if("BarcodeDetector" in window){
+      try{ var fm=await BarcodeDetector.getSupportedFormats(); useNative = fm.indexOf("ean_13")>-1; }catch(e){}
+    }
+    if(useNative){
+      var det=new BarcodeDetector({formats:["ean_13"]});
+      (function loop(){
+        if(!running) return;
+        det.detect(v).then(function(r){ if(r.length) found(r[0].rawValue); }).catch(function(){}).then(function(){ setTimeout(loop,110); });
+      })();
+    }else if(await loadZX() && window.ZXing){
+      var hints=new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+      zx=new ZXing.BrowserMultiFormatReader(hints);
+      zx.decodeFromVideoElement(v, function(res){ if(res) found(res.getText()); });
+    }else{ setMsg("Non riesco a caricare il lettore di codici. Usa «Aggiungi a Mano» con una foto."); }
+  }
+
+  function stop(){
+    running=false;
+    if(zx){ try{zx.reset();}catch(e){} zx=null; }
+    if(stream){ stream.getTracks().forEach(function(t){t.stop();}); stream=null; }
+    v.srcObject=null; go.hidden=false; stopBtn.hidden=true; torchBtn.hidden=true;
+    frame.style.display="none"; line.style.display="none"; setMsg("Scanner fermo.");
+  }
+
+  go.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+  torchBtn.addEventListener("click", async function(){
+    torchOn=!torchOn;
+    try{ await track.applyConstraints({advanced:[{torch:torchOn}]}); }catch(e){ setMsg("Luce non supportata."); }
+  });
+})();
+</script>
+</body>
+</html>
+"""
+
+def _prepara_scanner():
+    """Crea da solo la cartella del componente: non serve piu' caricarla su GitHub."""
+    import tempfile
+    for base in (os.path.dirname(os.path.abspath(__file__)), tempfile.gettempdir()):
+        try:
+            cartella = os.path.join(base, "scanner_component_auto")
+            os.makedirs(cartella, exist_ok=True)
+            with open(os.path.join(cartella, "index.html"), "w", encoding="utf-8") as f:
+                f.write(SCANNER_HTML)
+            return cartella
+        except Exception:
+            continue
+    return None
+
+SCANNER_DIR = _prepara_scanner()
+scanner = components.declare_component("isbn_scanner", path=SCANNER_DIR) if SCANNER_DIR else None
 
 # =============================================================
 # DATABASE
@@ -555,11 +700,11 @@ elif scelta == "⚡ Scansione Veloce":
     stato_raffica = st.selectbox("Aggiungi i libri scansionati come:", STATI, index=0)
 
     if scanner is None:
-        st.error("Manca la cartella `scanner_component` accanto a booknook.py nel repository. "
+        st.error("Non riesco a preparare lo scanner. "
                  "Usa 'Aggiungi a Mano' con la foto del codice.")
     else:
         val = scanner(key="isbn_live", default=None)
-        st.caption("Non vedi il pulsante «Avvia scanner» qui sopra? Aggiorna la pagina (o ricarica senza cache) e controlla che il file `scanner_component/index.html` sia nel repository.")
+        st.caption("Non vedi il pulsante «Avvia scanner» qui sopra? Aggiorna la pagina (o ricarica senza cache) e prova di nuovo.")
         if val and val.get("t") != st.session_state.last_scan_t:
             st.session_state.last_scan_t = val["t"]
             isbn = pulisci_isbn(val.get("isbn", ""))
