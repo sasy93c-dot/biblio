@@ -94,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookApp/8.0"}
+HEADERS = {"User-Agent": "BookNookApp/5.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -245,6 +245,11 @@ st.markdown("""
             border:1px solid rgba(255,207,92,.65);border-radius:16px;padding:12px;text-align:center;margin-bottom:8px}
   .badge-off{background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.2);
              border-radius:16px;padding:12px;text-align:center;opacity:.55;margin-bottom:8px}
+  
+  /* Nasconde il tasto manuale 'Take Photo': lo scanner lavora da solo */
+  div[data-testid="stCameraInput"] button {
+    display: none !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -499,11 +504,11 @@ elif scelta == "🛋️ La Mia Libreria":
                             st.rerun()
 
 # =============================================================
-# 3. SCANSIONE VELOCE (ESCLUSIVAMENTE FOTOCAMERA POSTERIORE)
+# 3. SCANSIONE VELOCE (AUTORIZZATA & AUTOMATICA CONTINUA)
 # =============================================================
 elif scelta == "⚡ Scansione Veloce":
-    st.markdown('<div class="hero"><h1>⚡ Scansione Fotocamera Posteriore</h1>'
-                '<p>Inquadra il codice a barre sul retro del libro con la fotocamera posteriore.</p></div>',
+    st.markdown('<div class="hero"><h1>⚡ Scansione Automatica Continua</h1>'
+                '<p>Inquadra il codice a barre: non devi scattare, la fotocamera rileva e registra da sola.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
@@ -513,7 +518,7 @@ elif scelta == "⚡ Scansione Veloce":
     c_conf1, c_conf2 = st.columns([1, 1])
     stato_raffica = c_conf1.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Controllo ISBN catturato dal ritorno URL
+    # Lettura codice inviato in automatico
     isbn_catturato = None
     try:
         if "isbn_auto" in st.query_params:
@@ -522,230 +527,115 @@ elif scelta == "⚡ Scansione Veloce":
     except Exception:
         pass
 
-    # Contenitore UI dedicato alla fotocamera posteriore (NESSUN st.camera_input!)
-    st.markdown("<div id='scanner-mount-point'></div>", unsafe_allow_html=True)
+    st.success("🟢 **Fotocamera e Scanner Laser Attivi**: tieni il codice a barre dentro l'inquadratura.")
 
-    # Script di controllo che forza l'obiettivo posteriore hardware
-    JS_SOLO_POSTERIORE = """
+    # 1. Fotocamera NATIVA autorizzata da Streamlit
+    cam_dummy = st.camera_input("Scansione in tempo reale", key="cam_live_feed")
+
+    # 2. Sensore Ottico JavaScript collegato direttamente alla fotocamera Streamlit
+    JS_SCANNER_HOOK = """
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
     <script>
     (function(){
-      var doc = window.parent.document;
-      var mount = doc.getElementById("scanner-mount-point");
-      if (!mount) return;
+      var lastFound = "";
+      var lastTime = 0;
 
-      // Crea l'interfaccia se non esiste già
-      if (!doc.getElementById("bn-rear-wrapper")) {
-        var wrapper = doc.createElement("div");
-        wrapper.id = "bn-rear-wrapper";
-        wrapper.style.cssText = "max-width:580px;margin:15px auto;background:#0d091e;border-radius:18px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.5);";
-        wrapper.innerHTML = `
-          <div id="bn-preview-box" style="position:relative;width:100%;height:370px;background:#000;display:flex;align-items:center;justify-content:center;">
-            <video id="bn-rear-video" playsinline autoplay muted style="width:100%;height:100%;object-fit:cover;display:none;"></video>
-            
-            <div id="bn-start-screen" style="text-align:center;padding:25px;color:#fff;">
-              <div style="font-size:3.5rem;margin-bottom:12px;">📷</div>
-              <h3 style="margin:0 0 8px;font-size:1.3rem;">Fotocamera Posteriore</h3>
-              <p style="margin:0 0 18px;color:#bbb;font-size:14px;">Tocca per aprire l'obiettivo posteriore ed eseguire la scansione continua.</p>
-              <button id="bn-btn-open-rear" style="background:linear-gradient(135deg,#7b2ff7,#f107a3);color:#fff;border:none;padding:14px 28px;border-radius:14px;font-size:16px;font-weight:bold;cursor:pointer;box-shadow:0 4px 15px rgba(123,47,247,0.4);">
-                ▶️ Apri Fotocamera Posteriore
-              </button>
+      function beep() {
+        try {
+          var ctx = new (window.AudioContext || window.webkitAudioContext)();
+          var o = ctx.createOscillator();
+          o.type = "sine";
+          o.frequency.value = 920;
+          o.connect(ctx.destination);
+          o.start();
+          setTimeout(function(){ o.stop(); ctx.close(); }, 130);
+        } catch(e){}
+      }
+
+      function onDetected(code) {
+        var d = String(code).replace(/[^0-9Xx]/g, "").toUpperCase();
+        if (!((d.length === 13 && /^97[89]/.test(d)) || d.length === 10)) return;
+
+        var now = Date.now();
+        if (d === lastFound && (now - lastTime) < 5000) return;
+        lastFound = d;
+        lastTime = now;
+
+        beep();
+        if (navigator.vibrate) navigator.vibrate(120);
+
+        try {
+          var parentUrl = new URL(window.parent.location.href);
+          parentUrl.searchParams.set("isbn_auto", d);
+          window.parent.location.href = parentUrl.href;
+        } catch(e) {
+          window.parent.postMessage({isbn_auto: d}, "*");
+        }
+      }
+
+      function attachScanner() {
+        var doc = window.parent.document;
+        var video = doc.querySelector("div[data-testid='stCameraInput'] video") || doc.querySelector("video");
+        
+        if (!video) {
+          setTimeout(attachScanner, 400);
+          return;
+        }
+
+        // Aggiungi il mirino laser grafico direttamente sul video
+        var container = video.parentElement;
+        if (container && !doc.getElementById("laser-box-overlay")) {
+          container.style.position = "relative";
+          var overlay = doc.createElement("div");
+          overlay.id = "laser-box-overlay";
+          overlay.style.cssText = "position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:99;";
+          overlay.innerHTML = `
+            <div style="position:absolute;left:10%;right:10%;top:22%;bottom:22%;border:3px solid #ffcf5c;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,0.38);">
+              <div style="position:absolute;left:5%;right:5%;height:3px;background:#ff4d6d;top:50%;box-shadow:0 0 10px #ff4d6d;animation:sweep 1.6s infinite alternate ease-in-out;"></div>
             </div>
+            <style>
+              @keyframes sweep { from { top: 25%; } to { top: 75%; } }
+            </style>
+          `;
+          container.appendChild(overlay);
+        }
 
-            <div id="bn-scan-overlay" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;">
-              <div style="position:absolute;left:8%;right:8%;top:20%;bottom:20%;border:3px solid #ffcf5c;border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,0.42);">
-                <div style="position:absolute;left:4%;right:4%;height:3px;background:#ff4d6d;top:50%;box-shadow:0 0 10px #ff4d6d;animation:bnSweep 1.6s infinite alternate ease-in-out;"></div>
-              </div>
-            </div>
-
-            <div id="bn-sub-controls" style="display:none;position:absolute;bottom:12px;left:0;right:0;justify-content:center;gap:10px;pointer-events:auto;z-index:99;">
-              <button id="bn-btn-torch" style="background:#261d3a;color:#fff;border:1px solid #ffcf5c;padding:8px 16px;border-radius:10px;font-weight:bold;cursor:pointer;">🔦 Torcia</button>
-              <button id="bn-btn-stop" style="background:#261d3a;color:#ff4d6d;border:1px solid #ff4d6d;padding:8px 16px;border-radius:10px;font-weight:bold;cursor:pointer;">⏹ Chiudi</button>
-            </div>
-          </div>
-          <div id="bn-status-bar" style="padding:12px;background:#1d162e;color:#f0eafb;font-size:14px;text-align:center;border-left:4px solid #7b2ff7;">
-            Tocca «Apri Fotocamera Posteriore» per avviare.
-          </div>
-          <style>
-            @keyframes bnSweep { from { top: 24%; } to { top: 76%; } }
-          </style>
-        `;
-        mount.appendChild(wrapper);
-
-        var video = doc.getElementById("bn-rear-video");
-        var startScreen = doc.getElementById("bn-start-screen");
-        var overlay = doc.getElementById("bn-scan-overlay");
-        var subControls = doc.getElementById("bn-sub-controls");
-        var statusBar = doc.getElementById("bn-status-bar");
-        var btnOpen = doc.getElementById("bn-btn-open-rear");
-        var btnTorch = doc.getElementById("bn-btn-torch");
-        var btnStop = doc.getElementById("bn-btn-stop");
-
-        var stream = null;
-        var track = null;
-        var active = false;
-        var lastFound = "";
-        var lastTime = 0;
-
-        function beep() {
+        // Modalità 1: API Hardware BarcodeDetector
+        if ("BarcodeDetector" in window) {
           try {
-            var ctx = new (window.AudioContext || window.webkitAudioContext)();
-            var o = ctx.createOscillator();
-            o.type = "sine";
-            o.frequency.value = 950;
-            o.connect(ctx.destination);
-            o.start();
-            setTimeout(function(){ o.stop(); ctx.close(); }, 140);
+            var detector = new BarcodeDetector({ formats: ["ean_13"] });
+            function loopDetector() {
+              if (video.readyState >= 2) {
+                detector.detect(video).then(function(barcodes){
+                  if (barcodes.length > 0) onDetected(barcodes[0].rawValue);
+                }).catch(function(){});
+              }
+              setTimeout(loopDetector, 80);
+            }
+            loopDetector();
+            return;
           } catch(e){}
         }
 
-        function onDetected(code) {
-          var d = String(code).replace(/[^0-9Xx]/g, "").toUpperCase();
-          if (!((d.length === 13 && /^97[89]/.test(d)) || d.length === 10)) return;
-
-          var now = Date.now();
-          if (d === lastFound && (now - lastTime) < 5000) return;
-          lastFound = d;
-          lastTime = now;
-
-          beep();
-          if (navigator.vibrate) navigator.vibrate(140);
-          statusBar.textContent = "✅ Letto: " + d + " — Registrazione in corso...";
-
-          try {
-            var parentUrl = new URL(window.parent.location.href);
-            parentUrl.searchParams.set("isbn_auto", d);
-            window.parent.location.href = parentUrl.href;
-          } catch(e) {
-            window.parent.postMessage({isbn_auto: d}, "*");
-          }
+        // Modalità 2: Fallback libreria ZXing continua
+        if (window.ZXing) {
+          var hints = new Map();
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
+          var reader = new ZXing.BrowserMultiFormatReader(hints);
+          reader.decodeFromVideoElement(video, function(res){
+            if (res) onDetected(res.getText());
+          });
         }
-
-        // Avvio ESCLUSIVO della fotocamera posteriore
-        async function startRearCamera() {
-          statusBar.textContent = "Accesso all'obiettivo posteriore in corso...";
-          var nav = window.parent.navigator || navigator;
-
-          try {
-            var devices = await nav.mediaDevices.enumerateDevices();
-            var videoDevices = devices.filter(function(d){ return d.kind === "videoinput"; });
-            var backId = null;
-
-            // Individua la fotocamera posteriore specifica
-            for (var i = 0; i < videoDevices.length; i++) {
-              var lbl = (videoDevices[i].label || "").toLowerCase();
-              if (lbl.indexOf("back") > -1 || lbl.indexOf("rear") > -1 || lbl.indexOf("posteriore") > -1 || lbl.indexOf("environment") > -1) {
-                backId = videoDevices[i].deviceId;
-                break;
-              }
-            }
-            if (!backId && videoDevices.length > 1) {
-              backId = videoDevices[videoDevices.length - 1].deviceId;
-            }
-
-            var constraints = {
-              audio: false,
-              video: backId 
-                ? { deviceId: { exact: backId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-                : { facingMode: { exact: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-            };
-
-            try {
-              stream = await nav.mediaDevices.getUserMedia(constraints);
-            } catch(eExact) {
-              stream = await nav.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-                audio: false
-              });
-            }
-
-            video.srcObject = stream;
-            await video.play();
-            track = stream.getVideoTracks()[0];
-            active = true;
-
-            // Interfaccia attiva
-            startScreen.style.display = "none";
-            video.style.display = "block";
-            overlay.style.display = "block";
-            subControls.style.display = "flex";
-            statusBar.textContent = "🟢 Fotocamera Posteriore Attiva: inquadra il codice a barre!";
-
-            // Messa a fuoco continua per codici a barre
-            if (track && track.getCapabilities) {
-              var caps = track.getCapabilities();
-              if (caps.focusMode && caps.focusMode.indexOf("continuous") > -1) {
-                track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function(){});
-              }
-            }
-
-            // Scansione automatica hardware BarcodeDetector
-            if ("BarcodeDetector" in window) {
-              try {
-                var detector = new BarcodeDetector({ formats: ["ean_13"] });
-                function loop(){
-                  if (!active) return;
-                  if (video.readyState >= 2) {
-                    detector.detect(video).then(function(barcodes){
-                      if (barcodes.length > 0) onDetected(barcodes[0].rawValue);
-                    }).catch(function(){});
-                  }
-                  setTimeout(loop, 75);
-                }
-                loop();
-                return;
-              } catch(e){}
-            }
-
-            // Scansione continua con libreria ZXing
-            if (window.ZXing) {
-              var hints = new Map();
-              hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
-              var reader = new ZXing.BrowserMultiFormatReader(hints);
-              reader.decodeFromVideoElement(video, function(res){
-                if (res && active) onDetected(res.getText());
-              });
-            }
-
-          } catch(err) {
-            statusBar.textContent = "Errore apertura fotocamera posteriore: " + err.name + ". Controlla i permessi del browser.";
-          }
-        }
-
-        function stopCamera() {
-          active = false;
-          if (stream) {
-            stream.getTracks().forEach(function(t){ t.stop(); });
-            stream = null;
-          }
-          video.srcObject = null;
-          video.style.display = "none";
-          overlay.style.display = "none";
-          subControls.style.display = "none";
-          startScreen.style.display = "block";
-          statusBar.textContent = "Fotocamera chiusa. Tocca per riavviare.";
-        }
-
-        btnOpen.addEventListener("click", startRearCamera);
-        btnStop.addEventListener("click", stopCamera);
-
-        var torchOn = false;
-        btnTorch.addEventListener("click", function(){
-          if (track && track.applyConstraints) {
-            torchOn = !torchOn;
-            track.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(function(){
-              alert("Torcia non disponibile su questo sensore.");
-            });
-          }
-        });
       }
+
+      setTimeout(attachScanner, 600);
     })();
     </script>
     """
-    components.html(JS_SOLO_POSTERIORE, height=0)
+    components.html(JS_SCANNER_HOOK, height=0)
 
-    # Inserimento opzionale manuale o con pistola USB
-    with st.expander("⌨️ Oppure digita l'ISBN a mano o usa una pistola barcode USB:"):
+    # Inserimento opzionale con pistola USB o manuale
+    with st.expander("⌨️ Oppure usa un lettore barcode USB o digita l'ISBN:"):
         with st.form("form_pistola", clear_on_submit=True):
             input_pistola = st.text_input("Codice ISBN (premi Invio per salvare):", placeholder="Es. 9788804668237")
             if st.form_submit_button("Aggiungi Subito") and input_pistola.strip():
