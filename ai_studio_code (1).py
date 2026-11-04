@@ -559,6 +559,7 @@ elif scelta == "⚡ Scansione Veloce":
                  "Usa 'Aggiungi a Mano' con la foto del codice.")
     else:
         val = scanner(key="isbn_live", default=None)
+        st.caption("Non vedi il pulsante «Avvia scanner» qui sopra? Aggiorna la pagina (o ricarica senza cache) e controlla che il file `scanner_component/index.html` sia nel repository.")
         if val and val.get("t") != st.session_state.last_scan_t:
             st.session_state.last_scan_t = val["t"]
             isbn = pulisci_isbn(val.get("isbn", ""))
