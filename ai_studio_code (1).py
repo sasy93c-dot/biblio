@@ -8,6 +8,7 @@ import sqlite3
 import requests
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime, date
 
 # =============================================================
@@ -93,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookApp/3.0"}
+HEADERS = {"User-Agent": "BookNookApp/4.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -107,7 +108,7 @@ def _isbn13(i):
 
 def _cover_valida(url):
     try:
-        r = requests.head(url, headers=HEADERS, timeout=5, allow_redirects=True)
+        r = requests.head(url, headers=HEADERS, timeout=4, allow_redirects=True)
         return r.ok and "image" in r.headers.get("content-type", "")
     except Exception:
         return False
@@ -120,7 +121,7 @@ def _google(q, isbn):
     except Exception:
         pass
     try:
-        r = requests.get("https://www.googleapis.com/books/v1/volumes", params=params, headers=HEADERS, timeout=8)
+        r = requests.get("https://www.googleapis.com/books/v1/volumes", params=params, headers=HEADERS, timeout=7)
         if not r.ok:
             return None
         items = r.json().get("items") or []
@@ -150,7 +151,7 @@ def _google(q, isbn):
 def _openlibrary(isbn):
     try:
         url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-        r = requests.get(url, headers=HEADERS, timeout=8)
+        r = requests.get(url, headers=HEADERS, timeout=7)
         if not r.ok:
             return None
         data = r.json().get(f"ISBN:{isbn}")
@@ -205,88 +206,8 @@ def cerca_info_libro(isbn_grezzo):
     return totale
 
 # =============================================================
-# DECODIFICA CODICI A BARRE POTENZIATA (ROBUSTA)
+# GESTIONE COPERTINE
 # =============================================================
-def decodifica_barcode(img_bytes):
-    """Analizza l'immagine applicando correzioni di contrasto, nitidezza e rotazioni."""
-    try:
-        from PIL import Image, ImageOps, ImageEnhance
-    except ImportError:
-        return None, "Libreria Pillow non installata."
-
-    has_zxing = False
-    try:
-        import zxingcpp
-        has_zxing = True
-    except ImportError:
-        pass
-
-    has_pyzbar = False
-    try:
-        from pyzbar import pyzbar
-        has_pyzbar = True
-    except ImportError:
-        pass
-
-    if not has_zxing and not has_pyzbar:
-        return None, "ERRORE_LIBRERIE"
-
-    try:
-        raw_img = Image.open(io.BytesIO(img_bytes))
-        img = ImageOps.exif_transpose(raw_img).convert("RGB")
-    except Exception as e:
-        return None, f"Errore apertura immagine: {e}"
-
-    # Ridimensionamento intelligente per evitare immagini giganti o minuscole
-    img.thumbnail((2000, 2000))
-    w, h = img.size
-
-    # Creazione delle aree candidate (intera immagine + ritaglio centrale)
-    ritagli = [
-        img,
-        img.crop((int(w * 0.1), int(h * 0.2), int(w * 0.9), int(h * 0.8))),
-        img.crop((int(w * 0.15), int(h * 0.3), int(w * 0.85), int(h * 0.7)))
-    ]
-
-    varianti = []
-    for r in ritagli:
-        grigio = ImageOps.grayscale(r)
-        contrasto = ImageOps.autocontrast(grigio, cutoff=2)
-        nitido = ImageEnhance.Sharpness(contrasto).enhance(2.0)
-        
-        for base in (contrasto, nitido):
-            varianti.append(base)
-            varianti.append(base.rotate(90, expand=True))
-            # Versione binarizzata ad alto contrasto
-            soglia = base.point(lambda p: 255 if p > 130 else 0)
-            varianti.append(soglia)
-
-    # 1. Tentativo con zxing-cpp (il più rapido e preciso per EAN-13)
-    if has_zxing:
-        for v in varianti:
-            try:
-                risultati = zxingcpp.read_barcodes(v, formats=zxingcpp.BarcodeFormat.EAN13, try_rotate=True)
-                for res in risultati:
-                    code = pulisci_isbn(res.text)
-                    if len(code) in (10, 13):
-                        return code, "OK"
-            except Exception:
-                continue
-
-    # 2. Tentativo con pyzbar come fallback
-    if has_pyzbar:
-        for v in varianti:
-            try:
-                trovati = pyzbar.decode(v)
-                for t in trovati:
-                    code = pulisci_isbn(t.data.decode("utf-8", errors="ignore"))
-                    if len(code) in (10, 13):
-                        return code, "OK"
-            except Exception:
-                continue
-
-    return None, "Nessun codice a barre riconosciuto. Assicurati che sia a fuoco, ben illuminato e riprova."
-
 def immagine_a_data_uri(file):
     from PIL import Image
     img = Image.open(file).convert("RGB")
@@ -578,11 +499,11 @@ elif scelta == "🛋️ La Mia Libreria":
                             st.rerun()
 
 # =============================================================
-# 3. SCANSIONE VELOCE (SENZA ERRORI DI COMPONENTI)
+# 3. SCANSIONE VELOCE (AUTOMATICA CONTINUA)
 # =============================================================
 elif scelta == "⚡ Scansione Veloce":
-    st.markdown('<div class="hero"><h1>⚡ Scansione Veloce</h1>'
-                '<p>Inquadra il codice a barre sul retro: il libro si scarica e si salva all\'istante.</p></div>',
+    st.markdown('<div class="hero"><h1>⚡ Scansione Automatica Continua</h1>'
+                '<p>Inquadra il codice a barre: non devi toccare nulla, il libro viene registrato al volo.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
@@ -590,58 +511,154 @@ elif scelta == "⚡ Scansione Veloce":
             st.session_state[k] = default
 
     c_conf1, c_conf2 = st.columns([1, 1])
-    stato_raffica = c_conf1.selectbox("Aggiungi i libri scansionati come:", STATI, index=0)
+    stato_raffica = c_conf1.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Verifica presenza librerie ottiche
-    try:
-        import zxingcpp
-    except ImportError:
-        try:
-            from pyzbar import pyzbar
-        except ImportError:
-            st.warning("⚠️ **Libreria di lettura codici non rilevata.** Esegui nel tuo terminale: `pip install zxing-cpp`")
-
-    tab_cam, tab_file, tab_pistola = st.tabs([
-        "📸 Fotocamera Diretta", 
-        "📁 Carica Immagine / Foto", 
-        "⌨️ Pistola Barcode USB / Digitazione Rapida"
-    ])
-
+    # Controllo se è arrivato un ISBN tramite URL automatico
     isbn_catturato = None
+    try:
+        if "isbn_auto" in st.query_params:
+            isbn_catturato = pulisci_isbn(st.query_params["isbn_auto"])
+            st.query_params.clear()
+    except Exception:
+        pass
 
-    with tab_cam:
-        st.caption("Inquadra il codice a barre sul retro del libro e scatta la foto:")
-        foto_webcam = st.camera_input("Scatta", key="cam_nativa")
-        if foto_webcam:
-            with st.spinner("Decodifica codice a barre..."):
-                codice, msg = decodifica_barcode(foto_webcam.getvalue())
-            if codice:
-                isbn_catturato = codice
-            elif msg == "ERRORE_LIBRERIE":
-                st.error("Installa la libreria ottica nel terminale: `pip install zxing-cpp`")
-            else:
-                st.error(msg)
+    # CODICE SCANNER CONTINUO (HTML5 + BarcodeDetector + Bip sonoro)
+    HTML_AUTO_SCANNER = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: transparent; color: #fff; }
+      #box { position: relative; width: 100%; max-width: 580px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: #0c081a; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+      video { width: 100%; height: 350px; object-fit: cover; display: block; background: #000; }
+      #target { position: absolute; left: 10%; right: 10%; top: 22%; bottom: 22%; border: 3px solid #ffcf5c; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); pointer-events: none; }
+      #line { position: absolute; left: 12%; right: 12%; height: 3px; background: #ff4d6d; top: 50%; box-shadow: 0 0 8px #ff4d6d; animation: laser 1.6s infinite ease-in-out alternate; pointer-events: none; }
+      @keyframes laser { from { top: 26%; } to { top: 74%; } }
+      #btn-start { width: 100%; max-width: 580px; margin: 10px auto 0; display: block; padding: 14px; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; cursor: pointer; color: #fff; background: linear-gradient(135deg, #7b2ff7, #f107a3); }
+      #status { width: 100%; max-width: 580px; margin: 10px auto 0; padding: 10px; border-radius: 10px; background: #211933; font-size: 14px; text-align: center; border-left: 4px solid #7b2ff7; box-sizing: border-box; }
+    </style>
+    </head>
+    <body>
+    <div id="box">
+      <video id="v" playsinline muted></video>
+      <div id="target"></div>
+      <div id="line"></div>
+    </div>
+    <button id="btn-start">📷 Clicca per Attivare Fotocamera Automatica</button>
+    <div id="status">Premi il pulsante sopra per iniziare la scansione continua.</div>
 
-    with tab_file:
-        st.caption("Carica una foto già scattata o uno screenshot del codice a barre:")
-        file_up = st.file_uploader("Scegli un'immagine", type=["jpg", "jpeg", "png", "webp"], key="upload_barcode")
-        if file_up:
-            with st.spinner("Analisi immagine..."):
-                codice, msg = decodifica_barcode(file_up.getvalue())
-            if codice:
-                isbn_catturato = codice
-            else:
-                st.error(msg)
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+    <script>
+      var v = document.getElementById("v");
+      var btn = document.getElementById("btn-start");
+      var status = document.getElementById("status");
+      var stream = null;
+      var active = false;
+      var lastCode = "";
+      var lastTime = 0;
 
-    with tab_pistola:
-        st.caption("Se hai un lettore barcode USB/Bluetooth, 'spara' qui sul codice oppure incollalo:")
+      function setStatus(t, err) {
+        status.textContent = t;
+        status.style.borderLeftColor = err ? "#ff4d6d" : "#7b2ff7";
+      }
+
+      function beep() {
+        try {
+          var ctx = new (window.AudioContext || window.webkitAudioContext)();
+          var o = ctx.createOscillator();
+          o.type = "sine";
+          o.frequency.value = 950;
+          o.connect(ctx.destination);
+          o.start();
+          setTimeout(function(){ o.stop(); ctx.close(); }, 140);
+        } catch(e){}
+      }
+
+      function onDetected(raw) {
+        var d = String(raw).replace(/[^0-9Xx]/g, "").toUpperCase();
+        if (!((d.length === 13 && /^97[89]/.test(d)) || d.length === 10)) return;
+        
+        var now = Date.now();
+        if (d === lastCode && (now - lastTime) < 4000) return;
+        lastCode = d;
+        lastTime = now;
+
+        beep();
+        if (navigator.vibrate) navigator.vibrate(120);
+        setStatus("✅ Letto: " + d + " — Registrazione in corso...");
+
+        // Ricarica la pagina madre con l'ISBN rilevato
+        try {
+          var url = new URL(window.parent.location.href);
+          url.searchParams.set("isbn_auto", d);
+          window.parent.location.href = url.href;
+        } catch(e) {
+          // Fallback se il browser blocca l'accesso cross-frame
+          window.parent.postMessage({isbn_auto: d}, "*");
+        }
+      }
+
+      async function startCam() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+          });
+          v.srcObject = stream;
+          await v.play();
+          active = true;
+          btn.style.display = "none";
+          setStatus("Scanner attivo! Passa il codice a barre davanti alla fotocamera.");
+
+          // Metodo 1: BarcodeDetector nativo hardware
+          if ("BarcodeDetector" in window) {
+            try {
+              var det = new BarcodeDetector({ formats: ["ean_13"] });
+              (function loop(){
+                if (!active) return;
+                det.detect(v).then(function(res){
+                  if (res.length > 0) onDetected(res[0].rawValue);
+                }).catch(function(){}).then(function(){
+                  setTimeout(loop, 70);
+                });
+              })();
+              return;
+            } catch(e){}
+          }
+
+          // Metodo 2: ZXing library continuo
+          if (window.ZXing) {
+            var hints = new Map();
+            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
+            var reader = new ZXing.BrowserMultiFormatReader(hints);
+            reader.decodeFromVideoElement(v, function(res){
+              if (res) onDetected(res.getText());
+            });
+          }
+        } catch(err) {
+          setStatus("Errore fotocamera: " + err.name + ". Verifica i permessi o la connessione HTTPS.", true);
+        }
+      }
+
+      btn.addEventListener("click", startCam);
+    </script>
+    </body>
+    </html>
+    """
+
+    # Mostra il box dello scanner automatico
+    components.html(HTML_AUTO_SCANNER, height=480)
+
+    # Inserimento manuale istantaneo per chi usa una pistola barcode USB
+    with st.expander("⌨️ Oppure usa un lettore barcode USB o digita a mano:"):
         with st.form("form_pistola", clear_on_submit=True):
-            input_pistola = st.text_input("Codice ISBN letto:", placeholder="Es. 9788804668237")
-            btn_pistola = st.form_submit_button("Aggiungi Subito")
-            if btn_pistola and input_pistola.strip():
+            input_pistola = st.text_input("Codice ISBN (premi Invio per salvare):", placeholder="Es. 9788804668237")
+            if st.form_submit_button("Aggiungi Subito") and input_pistola.strip():
                 isbn_catturato = pulisci_isbn(input_pistola)
 
-    # Processamento e salvataggio automatico se un codice è stato rilevato
+    # Se un libro è stato catturato (automaticamente dalla cam o da pistola)
     if isbn_catturato:
         isbn = isbn_catturato
         esiste = c.execute("SELECT titolo FROM miei_libri WHERE isbn = ?", (isbn,)).fetchone()
@@ -649,7 +666,7 @@ elif scelta == "⚡ Scansione Veloce":
             st.toast(f"Già presente: {esiste['titolo']}", icon="📚")
             st.session_state.log_scan.insert(0, f"📚 Già presente: **{esiste['titolo']}** ({isbn})")
         else:
-            with st.spinner(f"Cerco informazioni online per ISBN {isbn}..."):
+            with st.spinner(f"Cerco informazioni per ISBN {isbn}..."):
                 info = cerca_info_libro(isbn)
             if info:
                 inserisci_libro(c, conn, info["isbn"], info["titolo"], info["autore"], info["copertina"],
@@ -664,14 +681,13 @@ elif scelta == "⚡ Scansione Veloce":
                 st.toast(f"ISBN {isbn} non trovato online", icon="⚠️")
                 st.session_state.log_scan.insert(0, f"⚠️ ISBN {isbn} non trovato online: completalo qui sotto")
 
-    st.subheader("📋 Registro Scansioni di Questa Sessione")
+    st.subheader("📋 Registro Scansioni Recenti")
     if st.session_state.log_scan:
         for riga in st.session_state.log_scan[:8]:
             st.markdown(riga)
     else:
-        st.caption("I libri scansionati appariranno qui man mano che li acquisisci.")
+        st.caption("I libri scansionati appariranno qui man mano che li inquadri.")
 
-    # Box per completare a mano eventuali libri rari non trovati online
     for isbn_mancante in list(st.session_state.non_trovati):
         with st.expander(f"⚠️ Completa manualmente: {isbn_mancante}", expanded=True):
             nt = st.text_input("Titolo del volume", key=f"nt_{isbn_mancante}")
@@ -860,7 +876,7 @@ elif scelta == "🏆 Sfide & Trofei":
     p_anno = min(letti_anno / obj_anno, 1.0)
     st.progress(p_anno, text=f"{letti_anno} su {obj_anno} libri completati ({int(p_anno * 100)}%)")
     if p_anno >= 1.0:
-        st.success("🎉 Obiettivo annuale raggiunto!")
+        st.success("🎉 Complimenti! Hai raggiunto il tuo obiettivo annuale!")
 
     st.subheader("📅 Sfida Pagine del Mese")
     mese_cur = datetime.now().strftime("%Y-%m")
