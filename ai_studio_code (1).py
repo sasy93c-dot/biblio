@@ -94,7 +94,7 @@ def inserisci_libro(c, conn, isbn, titolo, autore="", copertina="", pagine=0, st
 # =============================================================
 # RICERCA ISBN ONLINE (Google Books + OpenLibrary)
 # =============================================================
-HEADERS = {"User-Agent": "BookNookMobile/2.0"}
+HEADERS = {"User-Agent": "BookNookMobile/3.0"}
 
 def pulisci_isbn(s):
     return re.sub(r"[^0-9Xx]", "", str(s) if s else "").upper()
@@ -316,11 +316,11 @@ scelta = st.sidebar.radio("Menu:", [
 ])
 
 # =============================================================
-# 1. SCANSIONE VELOCE (OTTIMIZZATA PER CODICI EAN-13)
+# 1. SCANSIONE VELOCE (CON AUTO-SUBMIT E TASTO ANTI-BLOCCO)
 # =============================================================
 if scelta == "⚡ Scansione Veloce":
     st.markdown('<div class="hero"><h1>⚡ Scansione Posteriore</h1>'
-                '<p>Tieni il codice a barre dentro il riquadro giallo (a 15-20 cm). Salva da sola senza toccare nulla.</p></div>',
+                '<p>Inquadra il codice a barre a 15-20 cm. Se il browser blocca l\'auto-salvataggio, tocca il tasto verde che appare.</p></div>',
                 unsafe_allow_html=True)
 
     for k, default in [("log_scan", []), ("non_trovati", [])]:
@@ -329,8 +329,10 @@ if scelta == "⚡ Scansione Veloce":
 
     stato_raffica = st.selectbox("Salva nuovi libri come:", STATI, index=0)
 
-    # Cattura ISBN reindirizzato
+    # Modulo di ricezione dati da JavaScript (senza ricaricare la pagina)
     isbn_catturato = None
+
+    # Controllo 1: Query param URL
     try:
         if "isbn_auto" in st.query_params:
             isbn_catturato = pulisci_isbn(st.query_params["isbn_auto"])
@@ -338,38 +340,54 @@ if scelta == "⚡ Scansione Veloce":
     except Exception:
         pass
 
-    # SCANNER HTML5 SPECIFICO PER CODICI A BARRE (con Viewfinder e Html5Qrcode)
-    HTML_SCANNER_EAN13 = """
+    # Controllo 2: Ricezione dal form integrato
+    with st.form("form_auto_scanner", clear_on_submit=True):
+        col_in, col_sub = st.columns([3, 1])
+        with col_in:
+            isbn_form_val = st.text_input("Codice ISBN rilevato:", placeholder="Il codice apparirà qui...", key="isbn_input_scanner")
+        with col_sub:
+            sub_manuale = st.form_submit_button("📥 Registra")
+            if sub_manuale and isbn_form_val.strip():
+                isbn_catturato = pulisci_isbn(isbn_form_val)
+
+    # SCANNER JAVASCRIPT CON AUTO-SUBMIT E PULSANTE TOUCH DI EMERGENZA
+    HTML_SCANNER_ANTI_FREEZE = """
     <!DOCTYPE html>
     <html>
     <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <!-- Libreria specializzata in codici a barre per mobile -->
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
       body { margin: 0; background: transparent; font-family: -apple-system, system-ui, sans-serif; color: #fff; }
       #reader-box { background: #0c081c; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.12); }
-      #reader { width: 100%; min-height: 350px; background: #000; }
-      #start-panel { text-align: center; padding: 30px 15px; }
-      .btn-go { background: linear-gradient(135deg,#7b2ff7,#f107a3); color: #fff; border: none; padding: 15px 30px; border-radius: 14px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(123,47,247,0.4); }
+      #reader { width: 100%; min-height: 340px; background: #000; }
+      #start-panel { text-align: center; padding: 25px 15px; }
+      .btn-go { background: linear-gradient(135deg,#7b2ff7,#f107a3); color: #fff; border: none; padding: 14px 28px; border-radius: 14px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(123,47,247,0.4); }
       #status-info { padding: 12px; background: #1c152d; font-size: 13px; text-align: center; border-left: 4px solid #7b2ff7; }
-      /* Stile del viewfinder mirino */
-      #reader__scan_region { border: 3px solid #ffcf5c !important; border-radius: 12px !important; }
-      #reader__dashboard_section_csr button { background: #2b2342; color: #fff; border: 1px solid #7b2ff7; padding: 6px 12px; border-radius: 8px; }
+      #save-banner { display: none; margin: 10px auto; padding: 12px; border-radius: 12px; background: #123d2a; border: 2px solid #2ecc71; text-align: center; }
+      .btn-save-touch { display: inline-block; background: #2ecc71; color: #000; font-weight: bold; padding: 10px 20px; border-radius: 10px; font-size: 15px; text-decoration: none; margin-top: 8px; box-shadow: 0 4px 12px rgba(46,204,113,0.4); }
     </style>
     </head>
     <body>
     <div id="reader-box">
       <div id="start-panel">
         <div style="font-size:3.5rem;margin-bottom:10px;">📷</div>
-        <h3 style="margin:0 0 8px;">Scanner Posteriore EAN-13</h3>
-        <p style="margin:0 0 18px;color:#bbb;font-size:13px;">Inquadra il codice a barre sul retro del libro a 15-20 cm di distanza.</p>
-        <button id="btn-activate" class="btn-go">▶️ Avvia Fotocamera Posteriore</button>
+        <h3 style="margin:0 0 8px;">Scanner Posteriore</h3>
+        <p style="margin:0 0 16px;color:#bbb;font-size:13px;">Inquadra il codice a barre a 15-20 cm.</p>
+        <button id="btn-activate" class="btn-go">▶️ Apri Fotocamera Posteriore</button>
       </div>
 
       <div id="reader" style="display:none;"></div>
-      <div id="status-info">In attesa di avvio scanner...</div>
+      
+      <!-- Banner di conferma touch (nel caso in cui il browser blocchi il redirect) -->
+      <div id="save-banner">
+        <div id="save-banner-text" style="font-size:15px;font-weight:bold;color:#2ecc71;">✅ Codice Rilevato!</div>
+        <div style="font-size:12px;color:#ccc;margin:4px 0 8px;">Se la pagina non si aggiorna in 1 secondo:</div>
+        <a id="save-banner-btn" class="btn-save-touch" href="#" target="_parent">👉 TOCCA QUI PER SALVARE</a>
+      </div>
+
+      <div id="status-info">Tocca sopra per avviare la fotocamera.</div>
     </div>
 
     <script>
@@ -378,6 +396,10 @@ if scelta == "⚡ Scansione Veloce":
       var readerDiv = document.getElementById("reader");
       var statusInfo = document.getElementById("status-info");
       var btnActivate = document.getElementById("btn-activate");
+      var saveBanner = document.getElementById("save-banner");
+      var saveBannerText = document.getElementById("save-banner-text");
+      var saveBannerBtn = document.getElementById("save-banner-btn");
+
       var html5QrCode = null;
       var lastCode = "";
       var lastTime = 0;
@@ -410,29 +432,64 @@ if scelta == "⚡ Scansione Veloce":
 
         beep();
         if (navigator.vibrate) navigator.vibrate(140);
-        setStatus("✅ Codice ISBN Rilevato: " + clean + " — Salvataggio in corso...", false);
+        setStatus("✅ ISBN Rilevato: " + clean + " — Salvataggio...", false);
+
+        // Mostra il pulsante touch garantito
+        saveBannerText.textContent = "✅ Letto: " + clean;
+        saveBannerBtn.href = window.parent.location.pathname + "?isbn_auto=" + clean;
+        saveBannerBtn.textContent = "👉 TOCCA QUI PER REGISTRARE: " + clean;
+        saveBanner.style.display = "block";
 
         if (html5QrCode) {
           try { html5QrCode.pause(); } catch(e){}
         }
 
+        // METODO 1: Auto-compilazione del form nativo Streamlit nella pagina padre
         try {
-          var pUrl = new URL(window.parent.location.href);
-          pUrl.searchParams.set("isbn_auto", clean);
-          window.parent.location.href = pUrl.href;
-        } catch(e) {
-          window.parent.location.search = "?isbn_auto=" + clean;
-        }
+          var pDoc = window.parent.document;
+          var inputs = pDoc.querySelectorAll('input[type="text"]');
+          var targetInput = null;
+          for (var i = 0; i < inputs.length; i++) {
+            if (inputs[i].placeholder && inputs[i].placeholder.indexOf("codice apparirà") > -1) {
+              targetInput = inputs[i];
+              break;
+            }
+          }
+          if (targetInput) {
+            // Forza il valore nel componente React di Streamlit
+            var nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, "value").set;
+            nativeSetter.call(targetInput, clean);
+            targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+            targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+            // Clicca automaticamente il tasto Registra
+            setTimeout(function(){
+              var btns = pDoc.querySelectorAll('button');
+              for (var j = 0; j < btns.length; j++) {
+                if (btns[j].textContent && btns[j].textContent.indexOf("Registra") > -1) {
+                  btns[j].click();
+                  return;
+                }
+              }
+            }, 100);
+          }
+        } catch(errDom){}
+
+        // METODO 2: Navigazione automatica parent
+        setTimeout(function(){
+          try {
+            window.parent.location.href = window.parent.location.pathname + "?isbn_auto=" + clean;
+          } catch(e){}
+        }, 300);
       }
 
       async function startScanner() {
         startPanel.style.display = "none";
         readerDiv.style.display = "block";
-        setStatus("Avvio fotocamera posteriore con mirino laser...", false);
+        setStatus("Attivazione fotocamera posteriore...", false);
 
         html5QrCode = new Html5Qrcode("reader");
 
-        // Configuriamo il mirino specifico per codici a barre orizzontali (280x140px)
         var config = {
           fps: 20,
           qrbox: { width: 280, height: 140 },
@@ -447,7 +504,6 @@ if scelta == "⚡ Scansione Veloce":
         };
 
         try {
-          // Ricerca specifica della fotocamera posteriore tra i dispositivi
           var devices = await Html5Qrcode.getCameras();
           var targetCameraId = null;
 
@@ -470,13 +526,13 @@ if scelta == "⚡ Scansione Veloce":
             cameraSetting,
             config,
             onBarcodeFound,
-            function(err) { /* Scansione fotogramma in corso */ }
+            function(err) {}
           );
 
-          setStatus("🟢 Inquadra il codice a barre dentro il riquadro giallo (distanza 15-20 cm).", false);
+          setStatus("🟢 Inquadra il codice a barre nel riquadro giallo (15-20 cm).", false);
 
         } catch(err) {
-          setStatus("Errore avvio fotocamera: " + err + ". Verifica i permessi o la connessione HTTPS.", true);
+          setStatus("Errore fotocamera: " + err, true);
         }
       }
 
@@ -487,20 +543,9 @@ if scelta == "⚡ Scansione Veloce":
     </html>
     """
 
-    components.html(HTML_SCANNER_EAN13, height=440)
+    components.html(HTML_SCANNER_ANTI_FREEZE, height=450)
 
-    st.caption("💡 **Consiglio di lettura su smartphone**:")
-    st.caption("- Tieni il libro a circa **15-20 cm** dall'obiettivo (se sei troppo vicino, la fotocamera non riesce a mettere a fuoco).")
-    st.caption("- Posiziona le barre nere orizzontali e ben illuminate dentro il rettangolo.")
-
-    # Inserimento manuale rapido / barcode gun
-    with st.expander("⌨️ Oppure digita l'ISBN a mano:"):
-        with st.form("form_pistola", clear_on_submit=True):
-            input_pistola = st.text_input("Codice ISBN:", placeholder="Es. 9788804668237")
-            if st.form_submit_button("Aggiungi Subito") and input_pistola.strip():
-                isbn_catturato = pulisci_isbn(input_pistola)
-
-    # Processamento automatico libro rilevato
+    # Processamento e salvataggio nel database del libro
     if isbn_catturato:
         isbn = isbn_catturato
         esiste = c.execute("SELECT titolo FROM miei_libri WHERE isbn = ?", (isbn,)).fetchone()
