@@ -1,4 +1,6 @@
-   streamlit
-   requests
-   pillow
-   zxing-cpp
+streamlit>=1.50
+requests
+pillow
+pandas
+zxing-cpp
+ 
